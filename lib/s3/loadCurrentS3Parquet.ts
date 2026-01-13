@@ -1,31 +1,22 @@
-import pl from "nodejs-polars";
+import * as parquet from "parquetjs-lite";
 
 export async function loadCurrentS3Parquet(bucket: string, table_name: string) {
-  if (!bucket) {
-    throw new Error("Bucket name must be provided");
+  const url = `https://${bucket}.s3.amazonaws.com/${table_name}/current/2026-01-12%4012%3A06%3A39_account_balances.parquet`;
+
+  // Fetch the Parquet file as a Buffer
+  const response = await fetch(url);
+  const buffer = await response.arrayBuffer();
+
+  // Use @alancnet/parquetjs to read the Parquet file
+  const reader = await parquet.ParquetReader.openBuffer(Buffer.from(buffer));
+  const cursor = reader.getCursor();
+  const rows = [];
+
+  let record = null;
+  while ((record = await cursor.next())) {
+    rows.push(record);
   }
 
-  const region = process.env.AWS_REGION;
-  if (!region) {
-    throw new Error("AWS_REGION environment variable must be set");
-  }
-
-  try {
-    // Read Parquet directly from S3 using scanParquet
-    const df = pl
-      .scanParquet(
-        `s3://${bucket}/${table_name}/current/*.parquet`,
-        {
-          cloudOptions: {
-            aws_region: region,
-          },
-        }
-      )
-      .collectSync();
-
-    return df; // Return the DataFrame
-  } catch (error) {
-    console.error("Failed to load Parquet file from S3:", error);
-    throw error;
-  }
+  await reader.close();
+  return rows;
 }
