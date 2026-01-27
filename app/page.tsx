@@ -34,8 +34,15 @@ export default function HomePage() {
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([])
   const [groupBy, setGroupBy] = useState<'institution' | 'account_type'>('institution')
   const [chartGroupBy, setChartGroupBy] = useState<'account' | 'institution'>('account')
-  const [minDate, setMinDate] = useState<string>('')
-  const [maxDate, setMaxDate] = useState<string>('')
+  
+  // Default to current month
+  const now = new Date()
+  const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+  const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+  
+  const [minDate, setMinDate] = useState<string>(firstDayOfMonth.toISOString().split('T')[0])
+  const [maxDate, setMaxDate] = useState<string>(lastDayOfMonth.toISOString().split('T')[0])
+  const [datePreset, setDatePreset] = useState<'current' | 'last' | 'all' | 'custom'>('current')
 
   // Format currency with commas
   const formatCurrency = (value: number) => {
@@ -154,16 +161,39 @@ export default function HomePage() {
       const typeMatch = selectedAccountTypes.length === 0 || selectedAccountTypes.includes(item.account_type)
       const nameMatch = selectedAccounts.length === 0 || selectedAccounts.includes(item.display_name)
       
-      // Only include data from this account's last_pulled date onwards
-      const lastPulled = accountLastPulled.get(item.display_name)
-      const dateMatch = !lastPulled || new Date(item.last_updated) >= lastPulled
-      
       // Apply user-defined date filters
       const itemDate = new Date(item.last_updated)
       const userDateMatch = (!userMinDate || itemDate >= userMinDate) && (!userMaxDate || itemDate <= userMaxDate)
       
-      return typeMatch && nameMatch && dateMatch && userDateMatch
+      return typeMatch && nameMatch && userDateMatch
     })
+    
+    // Debug: log unique institutions in chart data
+    const uniqueInstitutions = Array.from(new Set(chartFilteredItems.map(item => item.institution_name)))
+    console.log('Chart institutions:', uniqueInstitutions)
+    console.log('Chart filtered items count:', chartFilteredItems.length)
+    console.log('Total items count:', items.length)
+    
+    // Debug: log date ranges by institution
+    const institutionDateRanges = new Map()
+    items.forEach(item => {
+      const institution = item.institution_name
+      const date = new Date(item.last_pulled)
+      if (!institutionDateRanges.has(institution)) {
+        institutionDateRanges.set(institution, { min: date, max: date })
+      } else {
+        const range = institutionDateRanges.get(institution)
+        if (date < range.min) range.min = date
+        if (date > range.max) range.max = date
+      }
+    })
+    console.log('Institution date ranges:', Object.fromEntries(
+      Array.from(institutionDateRanges.entries()).map(([inst, range]) => [
+        inst, 
+        { min: range.min.toDateString(), max: range.max.toDateString() }
+      ])
+    ))
+    console.log('Current filter range:', { minDate, maxDate })
     
     // Group by timestamp first, then sum by account or institution
     const timeSeriesMap = new Map<string, { [key: string]: number }>()
@@ -174,22 +204,26 @@ export default function HomePage() {
       const groupKey = chartGroupBy === 'account' ? item.display_name : item.institution_name
       allGroups.add(groupKey)
       groupToInstitution.set(groupKey, item.institution_name)
-      const timestamp = item.last_updated
-      if (!timeSeriesMap.has(timestamp)) {
-        timeSeriesMap.set(timestamp, {})
+      // Group by date only (not full timestamp)
+      const date = new Date(item.last_pulled).toDateString()
+      if (!timeSeriesMap.has(date)) {
+        timeSeriesMap.set(date, {})
       }
-      const timeData = timeSeriesMap.get(timestamp)!
+      const timeData = timeSeriesMap.get(date)!
       const balance = item.current_balance || 0
       // Credit cards are negated (they represent debt)
       const adjustedBalance = item.account_type === 'credit_card' ? -balance : balance
-      timeData[groupKey] = (timeData[groupKey] || 0) + adjustedBalance
+      
+      // Take the most recent entry for this group on this date
+      // Since items might be sorted, we'll overwrite with latest
+      timeData[groupKey] = adjustedBalance
     })
     
     // Convert to array and sort by timestamp
     let data = Array.from(timeSeriesMap.entries())
-      .map(([timestamp, groups]) => {
+      .map(([dateString, groups]) => {
         // Ensure all groups are present in each timestamp
-        const completeData: { [key: string]: any } = { timestamp }
+        const completeData: { [key: string]: any } = { timestamp: new Date(dateString).toISOString() }
         allGroups.forEach(group => {
           completeData[group] = groups[group] !== undefined ? groups[group] : null
         })
@@ -293,6 +327,39 @@ export default function HomePage() {
     setSelectedAccounts([])
   }
 
+  const setCurrentMonth = () => {
+    const now = new Date()
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+    setMinDate(firstDay.toISOString().split('T')[0])
+    setMaxDate(lastDay.toISOString().split('T')[0])
+    setDatePreset('current')
+  }
+
+  const setLastMonth = () => {
+    const now = new Date()
+    const firstDay = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    const lastDay = new Date(now.getFullYear(), now.getMonth(), 0)
+    setMinDate(firstDay.toISOString().split('T')[0])
+    setMaxDate(lastDay.toISOString().split('T')[0])
+    setDatePreset('last')
+  }
+
+  const setAllTime = () => {
+    setMinDate('')
+    setMaxDate('')
+    setDatePreset('all')
+  }
+
+  const handleDateChange = (type: 'min' | 'max', value: string) => {
+    if (type === 'min') {
+      setMinDate(value)
+    } else {
+      setMaxDate(value)
+    }
+    setDatePreset('custom')
+  }
+
   // Group accounts for display
   const groupedAccounts = useMemo(() => {
     if (groupBy === 'institution') {
@@ -336,7 +403,6 @@ export default function HomePage() {
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-4xl font-bold text-white mb-2">Accounts</h1>
-          <p className="text-slate-400">Manage and monitor your financial accounts</p>
         </div>
 
         <div className="flex gap-8">
@@ -369,7 +435,7 @@ export default function HomePage() {
                           : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
                       }`}
                     >
-                      {type}
+                      {formatAccountType(type)}
                     </button>
                   ))}
                 </div>
@@ -433,27 +499,30 @@ export default function HomePage() {
                 <div key={groupName} className="mb-8">
                   <h3 className="text-lg font-semibold text-slate-300 mb-4">{groupBy === 'account_type' ? formatAccountType(groupName) : groupName}</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                    {accounts.map((account, index) => (
-                      <div key={index} className="bg-slate-800 rounded-lg border border-slate-700 p-6 hover:border-slate-500 transition-colors">
-                        <div className="mb-4">
-                          <p className="text-sm text-slate-400">{account.institution_name}</p>
-                          <h3 className="text-lg font-semibold text-white">{account.display_name}</h3>
-                        </div>
+                    {accounts
+                      .slice()
+                      .sort((a, b) => (b.current_balance || 0) - (a.current_balance || 0))
+                      .map((account, index) => (
+                        <div key={index} className="bg-slate-800 rounded-lg border border-slate-700 p-6 hover:border-slate-500 transition-colors">
+                          <div className="mb-4">
+                            <p className="text-sm text-slate-400">{account.institution_name}</p>
+                            <h3 className="text-lg font-semibold text-white">{account.display_name}</h3>
+                          </div>
 
-                        <div className="mb-4">
-                          <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Current Balance</p>
-                          <p className="text-2xl font-bold text-white">
-                            {formatCurrency(account.current_balance || 0)}
-                          </p>
-                        </div>
+                          <div className="mb-4">
+                            <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Current Balance</p>
+                            <p className="text-2xl font-bold text-white">
+                              {formatCurrency(account.current_balance || 0)}
+                            </p>
+                          </div>
 
-                        <div className="pt-4 border-t border-slate-700">
-                          <p className="text-xs text-slate-500">
-                            Last pulled: {new Date(account.last_updated).toLocaleDateString()}
-                          </p>
+                          <div className="pt-4 border-t border-slate-700">
+                            <p className="text-xs text-slate-500">
+                              Last pulled: {new Date(account.last_pulled).toLocaleDateString()}
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
                   </div>
                 </div>
               ))}
@@ -508,38 +577,81 @@ export default function HomePage() {
               </div>
               
               {/* Date Filters */}
-              <div className="flex gap-4 mb-6">
-                <div className="flex flex-col">
-                  <label className="text-sm text-slate-400 mb-2">Min Date</label>
-                  <input
-                    type="date"
-                    value={minDate}
-                    onChange={(e) => setMinDate(e.target.value)}
-                    className="bg-slate-700 text-white px-3 py-2 rounded border border-slate-600 hover:border-slate-500"
-                  />
+              <div className="flex gap-4 mb-6 justify-between items-end">
+                <div className="flex gap-4">
+                  <div className="flex flex-col">
+                    <label className="text-sm text-slate-400 mb-2">Min Date</label>
+                    <input
+                      type="date"
+                      value={minDate}
+                      onChange={(e) => handleDateChange('min', e.target.value)}
+                      className="bg-slate-700 text-white px-3 py-2 rounded border border-slate-600 hover:border-slate-500"
+                    />
+                  </div>
+                  <div className="flex flex-col">
+                    <label className="text-sm text-slate-400 mb-2">Max Date</label>
+                    <input
+                      type="date"
+                      value={maxDate}
+                      onChange={(e) => handleDateChange('max', e.target.value)}
+                      className="bg-slate-700 text-white px-3 py-2 rounded border border-slate-600 hover:border-slate-500"
+                    />
+                  </div>
                 </div>
                 <div className="flex flex-col">
-                  <label className="text-sm text-slate-400 mb-2">Max Date</label>
-                  <input
-                    type="date"
-                    value={maxDate}
-                    onChange={(e) => setMaxDate(e.target.value)}
-                    className="bg-slate-700 text-white px-3 py-2 rounded border border-slate-600 hover:border-slate-500"
-                  />
-                </div>
-                {(minDate || maxDate) && (
-                  <div className="flex items-end">
+                  <label className="text-sm text-slate-400 mb-2 opacity-0">Presets</label>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={setCurrentMonth}
+                      className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
+                        datePreset === 'current'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                      }`}
+                    >
+                      Current Month
+                    </button>
+                    <button
+                      onClick={setLastMonth}
+                      className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
+                        datePreset === 'last'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                      }`}
+                    >
+                      Last Month
+                    </button>
+                    <button
+                      onClick={setAllTime}
+                      className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
+                        datePreset === 'all'
+                          ? 'bg-green-600 text-white'
+                          : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                      }`}
+                    >
+                      All Time
+                    </button>
+                    <button
+                      className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
+                        datePreset === 'custom'
+                          ? 'bg-purple-600 text-white'
+                          : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                      }`}
+                    >
+                      Custom
+                    </button>
                     <button
                       onClick={() => {
                         setMinDate('')
                         setMaxDate('')
+                        setDatePreset('custom')
                       }}
                       className="bg-slate-600 hover:bg-slate-500 text-white px-3 py-2 rounded text-sm"
                     >
                       Clear
                     </button>
                   </div>
-                )}
+                </div>
               </div>
               {chartData.data.length > 0 ? (
                 <ResponsiveContainer width="100%" height={600}>
