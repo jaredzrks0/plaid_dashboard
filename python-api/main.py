@@ -1,6 +1,6 @@
 import polars as pl
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from datetime import datetime
 from datetime import timedelta
 from typing import List
@@ -26,7 +26,7 @@ async def root():
     return {"message": "Zirk-Finance API is running"}
 
 @app.get('/accounts/current-balances', response_model = List[AccountsTable])
-def get_current_account_balances(included_accounts: List | None = None) -> List[AccountsTable]:
+def get_current_account_balances(included_accounts: List[str] | None = Query(None)) -> List[AccountsTable]:
     filtered_df = (
         pl.scan_parquet("s3://zirk-finance-tracker/account/current/*")
         .sort('last_pulled', descending=False)
@@ -44,7 +44,7 @@ def get_current_account_balances(included_accounts: List | None = None) -> List[
 @app.get('/accounts/', response_model=List[AccountsTable])
 def get_accounts_table(min_date: datetime = datetime(2025, 9, 1),
                        max_date: datetime = datetime(2099, 12, 31),
-                       included_accounts: List | None = None):
+                       included_accounts: List[str] | None = Query(None)):
     filtered_df = (
         pl.scan_parquet("s3://zirk-finance-tracker/account/current/*")
         .filter(
