@@ -1,6 +1,7 @@
 'use client';
 
 import { useTheme } from '@/contexts/ThemeContext';
+import { NavigationBar } from './NavigationBar';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -37,6 +38,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             )}
           </button>
         </header>
+        <NavigationBar />
         {children}
       </div>
     </div>

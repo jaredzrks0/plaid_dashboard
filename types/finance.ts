@@ -55,3 +55,102 @@ export interface HistoricalDataPoint {
   sortKey: string;
   [accountName: string]: number | string;
 }
+
+// Transaction types
+
+export interface Transaction {
+  account_id: string;
+  transaction_id: string;
+  transaction_amount: number;
+  transaction_date: string | null;
+  description: string | null;
+  merchant_name: string | null;
+  merchant_name_specific: string | null;
+  primary_financial_category: string | null;
+  detailed_financial_category: string | null;
+  financial_category_confidence_level: string | null;
+  category: string | null;
+  payment_channel: string | null;
+  iso_currency_code: string | null;
+  transaction_pending: boolean;
+  is_subscription: boolean | null;
+  is_split: boolean | null;
+  split_origin_id: string | null;
+  merchant_city: string | null;
+  merchant_region: string | null;
+  transaction_year: number | null;
+  transaction_month: number | null;
+  transaction_day: number | null;
+  is_corrected: boolean;
+}
+
+export interface TransactionsResponse {
+  transactions: Transaction[];
+  total_count: number;
+  categories: string[];
+  accounts: string[];
+}
+
+export interface MonthlyCategorySpend {
+  month: string;
+  category: string;
+  total: number;
+}
+
+export interface MerchantSpend {
+  merchant_name: string;
+  total: number;
+  count: number;
+}
+
+export interface MonthlyTotal {
+  month: string;
+  total_spending: number;
+  total_income: number;
+}
+
+export interface TransactionSummary {
+  monthly_by_category: MonthlyCategorySpend[];
+  top_merchants: MerchantSpend[];
+  monthly_totals: MonthlyTotal[];
+}
+
+export interface CorrectionCreate {
+  transaction_id: string;
+  corrected_category?: string;
+  corrected_merchant_name?: string;
+  corrected_amount?: number;
+}
+
+export interface SplitItem {
+  category: string;
+  amount: number;
+  description?: string;
+}
+
+export interface SplitCreate {
+  transaction_id: string;
+  original_amount: number;
+  splits: SplitItem[];
+}
+
+export interface CorrectionRecord {
+  correction_id: string;
+  transaction_id: string;
+  correction_type: string;
+  corrected_category: string | null;
+  corrected_merchant_name: string | null;
+  corrected_amount: number | null;
+  created_at: string;
+}
+
+export interface TransactionFilters {
+  search: string;
+  categories: string[];
+  accountIds: string[];
+  paymentChannels: string[];
+  minDate: string;
+  maxDate: string;
+  sortBy: string;
+  sortDesc: boolean;
+}
