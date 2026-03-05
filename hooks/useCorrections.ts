@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { CorrectionRecord, CorrectionCreate, SplitCreate } from '@/types/finance';
+import { CorrectionRecord, CorrectionCreate, SplitCreate, Transaction } from '@/types/finance';
 
 const API_BASE_URL = 'http://localhost:8000';
 
@@ -9,6 +9,7 @@ interface UseCorrectionsReturn {
   error: string | null;
   submitCorrection: (correction: CorrectionCreate) => Promise<boolean>;
   submitSplit: (split: SplitCreate) => Promise<boolean>;
+  toggleHiddenFromSpending: (transaction: Transaction, hidden: boolean) => Promise<boolean>;
   deleteCorrection: (correctionId: string) => Promise<boolean>;
   refetch: () => void;
 }
@@ -42,11 +43,15 @@ export function useCorrections(): UseCorrectionsReturn {
 
   const submitCorrection = useCallback(async (correction: CorrectionCreate): Promise<boolean> => {
     try {
+      console.log('Submitting correction:', correction);
       const response = await fetch(`${API_BASE_URL}/transactions/corrections`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(correction),
       });
+      const responseData = await response.json();
+      console.log('Correction response:', { status: response.status, data: responseData });
+
       if (!response.ok) {
         throw new Error(`API Error: ${response.status} ${response.statusText}`);
       }
@@ -78,6 +83,18 @@ export function useCorrections(): UseCorrectionsReturn {
     }
   }, [fetchCorrections]);
 
+  const toggleHiddenFromSpending = useCallback(async (transaction: Transaction, hidden: boolean): Promise<boolean> => {
+    const correction: CorrectionCreate = {
+      transaction_id: transaction.transaction_id,
+      hidden_from_spending: hidden,
+      original_category: transaction.primary_financial_category ?? undefined,
+      original_merchant_name: transaction.merchant_name ?? undefined,
+      original_amount: transaction.transaction_amount,
+      original_date: transaction.transaction_date ?? undefined,
+    };
+    return submitCorrection(correction);
+  }, [submitCorrection]);
+
   const deleteCorrection = useCallback(async (correctionId: string): Promise<boolean> => {
     try {
       const response = await fetch(`${API_BASE_URL}/transactions/corrections/${correctionId}`, {
@@ -95,5 +112,5 @@ export function useCorrections(): UseCorrectionsReturn {
     }
   }, [fetchCorrections]);
 
-  return { corrections, loading, error, submitCorrection, submitSplit, deleteCorrection, refetch: fetchCorrections };
+  return { corrections, loading, error, submitCorrection, submitSplit, toggleHiddenFromSpending, deleteCorrection, refetch: fetchCorrections };
 }

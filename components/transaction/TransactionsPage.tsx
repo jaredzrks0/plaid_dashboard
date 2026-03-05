@@ -19,8 +19,6 @@ const defaultFilters: TransactionFilters = {
   categories: [],
   accountIds: [],
   paymentChannels: [],
-  minDate: '',
-  maxDate: '',
   sortBy: 'transaction_date',
   sortDesc: true,
 };
@@ -29,15 +27,19 @@ export function TransactionsPage() {
   const { theme } = useTheme();
   const [activeTab, setActiveTab] = useState<Tab>('recent');
   const [filters, setFilters] = useState<TransactionFilters>(defaultFilters);
-  const [limit] = useState(50);
-  const [offset, setOffset] = useState(0);
 
-  const { data, loading, error, refetch } = useTransactionData({ filters, limit, offset });
-  const { submitCorrection, submitSplit } = useCorrections();
+  const {
+    data, loading, error, refetch,
+    selectedPeriod, setSelectedPeriod,
+    viewMonth, setViewMonth,
+    prevMonth, nextMonth,
+    periodLabel, isSingleMonth,
+  } = useTransactionData({ filters });
+
+  const { submitCorrection, submitSplit, toggleHiddenFromSpending } = useCorrections();
 
   const handleFiltersChange = (newFilters: TransactionFilters) => {
     setFilters(newFilters);
-    setOffset(0);
   };
 
   const handleCorrectionSubmit = async (correction: Parameters<typeof submitCorrection>[0]) => {
@@ -50,6 +52,11 @@ export function TransactionsPage() {
     const success = await submitSplit(split);
     if (success) refetch();
     return success;
+  };
+
+  const handleToggleHidden = async (transaction: Parameters<typeof toggleHiddenFromSpending>[0], hidden: boolean) => {
+    // Don't refetch - the TransactionTable handles optimistic updates
+    return await toggleHiddenFromSpending(transaction, hidden);
   };
 
   const tabs: { key: Tab; label: string }[] = [
@@ -98,6 +105,14 @@ export function TransactionsPage() {
               onFiltersChange={handleFiltersChange}
               availableCategories={data?.categories || []}
               availableAccounts={data?.accounts || []}
+              selectedPeriod={selectedPeriod}
+              onPeriodChange={setSelectedPeriod}
+              viewMonth={viewMonth}
+              onViewMonthChange={setViewMonth}
+              prevMonth={prevMonth}
+              nextMonth={nextMonth}
+              isSingleMonth={isSingleMonth}
+              periodLabel={periodLabel}
             />
 
             {loading ? (
@@ -124,11 +139,10 @@ export function TransactionsPage() {
                 categories={data.categories}
                 filters={filters}
                 onFiltersChange={handleFiltersChange}
-                limit={limit}
-                offset={offset}
-                onPageChange={setOffset}
                 onSubmitCorrection={handleCorrectionSubmit}
                 onSubmitSplit={handleSplitSubmit}
+                onToggleHidden={handleToggleHidden}
+                onTransactionUpdated={() => {}}
               />
             ) : null}
           </>

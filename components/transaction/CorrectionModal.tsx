@@ -7,14 +7,21 @@ import { Transaction, CorrectionCreate, SplitCreate, SplitItem } from '@/types/f
 interface CorrectionModalProps {
   transaction: Transaction;
   categories: string[];
+  detailedCategories?: string[];
   onSubmitCorrection: (correction: CorrectionCreate) => Promise<boolean>;
   onSubmitSplit: (split: SplitCreate) => Promise<boolean>;
   onClose: () => void;
 }
 
+function toDateInputValue(dateStr: string | null): string {
+  if (!dateStr) return '';
+  return dateStr.split('T')[0];
+}
+
 export function CorrectionModal({
   transaction,
   categories,
+  detailedCategories = [],
   onSubmitCorrection,
   onSubmitSplit,
   onClose,
@@ -25,8 +32,16 @@ export function CorrectionModal({
 
   // Edit mode state
   const [editCategory, setEditCategory] = useState(transaction.primary_financial_category || '');
+  const [editDetail, setEditDetail] = useState(transaction.detailed_financial_category || '');
   const [editMerchant, setEditMerchant] = useState(transaction.merchant_name || '');
   const [editAmount, setEditAmount] = useState(String(transaction.transaction_amount));
+  const [editDate, setEditDate] = useState(toDateInputValue(transaction.transaction_date));
+
+  // Hidden from spending: default true if category contains 'transfer', else use existing value
+  const defaultHidden = transaction.primary_financial_category?.toLowerCase().includes('transfer')
+    ? true
+    : (transaction.hidden_from_spending ?? false);
+  const [hiddenFromSpending, setHiddenFromSpending] = useState(defaultHidden);
 
   // Split mode state
   const [splits, setSplits] = useState<SplitItem[]>([
@@ -66,15 +81,31 @@ export function CorrectionModal({
     setSubmitting(true);
     try {
       if (mode === 'edit') {
-        const correction: CorrectionCreate = { transaction_id: transaction.transaction_id };
+        const correction: CorrectionCreate = {
+          transaction_id: transaction.transaction_id,
+          original_category: transaction.primary_financial_category ?? undefined,
+          original_detail: transaction.detailed_financial_category ?? undefined,
+          original_merchant_name: transaction.merchant_name ?? undefined,
+          original_amount: transaction.transaction_amount,
+          original_date: transaction.transaction_date ?? undefined,
+        };
         if (editCategory !== transaction.primary_financial_category) {
-          correction.corrected_category = editCategory;
+          correction.corrected_category = editCategory || undefined;
         }
-        if (editMerchant !== transaction.merchant_name) {
-          correction.corrected_merchant_name = editMerchant;
+        if (editDetail !== transaction.detailed_financial_category) {
+          correction.corrected_detail = editDetail || undefined;
+        }
+        if (editMerchant !== (transaction.merchant_name ?? '')) {
+          correction.corrected_merchant_name = editMerchant || undefined;
         }
         if (Number(editAmount) !== transaction.transaction_amount) {
           correction.corrected_amount = Number(editAmount);
+        }
+        if (editDate && editDate !== toDateInputValue(transaction.transaction_date)) {
+          correction.corrected_date = editDate;
+        }
+        if (hiddenFromSpending !== (transaction.hidden_from_spending ?? false)) {
+          correction.hidden_from_spending = hiddenFromSpending;
         }
         const success = await onSubmitCorrection(correction);
         if (success) onClose();
@@ -186,6 +217,19 @@ export function CorrectionModal({
                 </select>
               </div>
               <div>
+                <label className={labelClass}>Detail</label>
+                <select
+                  value={editDetail}
+                  onChange={(e) => setEditDetail(e.target.value)}
+                  className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm ${inputClass}`}
+                >
+                  <option value="">Select detail (optional)</option>
+                  {detailedCategories.map(detail => (
+                    <option key={detail} value={detail}>{detail}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label className={labelClass}>Merchant Name</label>
                 <input
                   type="text"
@@ -203,6 +247,34 @@ export function CorrectionModal({
                   onChange={(e) => setEditAmount(e.target.value)}
                   className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm ${inputClass}`}
                 />
+              </div>
+              <div>
+                <label className={labelClass}>Date</label>
+                <input
+                  type="date"
+                  value={editDate}
+                  onChange={(e) => setEditDate(e.target.value)}
+                  className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm ${inputClass}`}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className={labelClass}>Hidden from Spending</p>
+                  <p className={theme === 'dark' ? 'text-xs text-slate-500 mt-0.5' : 'text-xs text-gray-400 mt-0.5'}>
+                    Excludes this transaction from spending summaries
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setHiddenFromSpending(!hiddenFromSpending)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+                    hiddenFromSpending ? 'bg-blue-600' : (theme === 'dark' ? 'bg-slate-600' : 'bg-gray-300')
+                  }`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    hiddenFromSpending ? 'translate-x-6' : 'translate-x-1'
+                  }`} />
+                </button>
               </div>
             </>
           ) : (

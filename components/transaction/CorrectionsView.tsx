@@ -27,6 +27,9 @@ export function CorrectionsView({ onCorrectionDeleted }: CorrectionsViewProps) {
       hour: 'numeric', minute: '2-digit',
     });
 
+  const formatShortDate = (dateStr: string) =>
+    new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
   if (loading) {
     return (
       <div className="animate-pulse">
@@ -71,6 +74,11 @@ export function CorrectionsView({ onCorrectionDeleted }: CorrectionsViewProps) {
     );
   }
 
+  const rowClass = theme === 'dark' ? 'text-sm text-slate-300' : 'text-sm text-gray-700';
+  const arrowClass = theme === 'dark' ? 'text-slate-500 mx-1' : 'text-gray-400 mx-1';
+  const fromClass = theme === 'dark' ? 'text-slate-500 line-through' : 'text-gray-400 line-through';
+  const toClass = theme === 'dark' ? 'text-slate-200 font-medium' : 'text-gray-900 font-medium';
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -82,6 +90,7 @@ export function CorrectionsView({ onCorrectionDeleted }: CorrectionsViewProps) {
       {[...grouped.entries()].map(([correctionId, items]) => {
         const first = items[0];
         const isSplit = first.correction_type === 'split';
+        const isHide = first.correction_type === 'hide';
 
         return (
           <Card key={correctionId}>
@@ -89,14 +98,14 @@ export function CorrectionsView({ onCorrectionDeleted }: CorrectionsViewProps) {
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-2">
-                    <Badge variant={isSplit ? 'default' : 'warning'}>
-                      {isSplit ? 'Split' : 'Edit'}
+                    <Badge variant={isSplit ? 'default' : isHide ? 'warning' : 'warning'}>
+                      {isSplit ? 'Split' : isHide ? 'Hidden' : 'Edit'}
                     </Badge>
                     <span className={theme === 'dark' ? 'text-xs text-slate-500' : 'text-xs text-gray-400'}>
                       {formatDate(first.created_at)}
                     </span>
                   </div>
-                  <p className={theme === 'dark' ? 'text-sm text-slate-400 mb-1' : 'text-sm text-gray-600 mb-1'}>
+                  <p className={theme === 'dark' ? 'text-sm text-slate-400 mb-2' : 'text-sm text-gray-600 mb-2'}>
                     Transaction: <span className="font-mono text-xs">{first.transaction_id}</span>
                   </p>
 
@@ -104,31 +113,81 @@ export function CorrectionsView({ onCorrectionDeleted }: CorrectionsViewProps) {
                     <div className="mt-2 space-y-1">
                       {items.map((item, i) => (
                         <div key={i} className="flex items-center gap-3">
-                          <span className={theme === 'dark' ? 'text-sm text-slate-300' : 'text-sm text-gray-700'}>
-                            {item.corrected_category}
-                          </span>
+                          <span className={rowClass}>{item.corrected_category}</span>
                           <span className={theme === 'dark' ? 'text-sm font-medium text-slate-200' : 'text-sm font-medium text-gray-900'}>
                             {item.corrected_amount != null ? formatCurrency(item.corrected_amount) : '—'}
                           </span>
                         </div>
                       ))}
                     </div>
+                  ) : isHide ? (
+                    <div className="mt-2 space-y-1">
+                      <p className={rowClass}>
+                        Hidden from spending:{' '}
+                        <span className={toClass}>
+                          {first.hidden_from_spending ? 'Yes' : 'No'}
+                        </span>
+                      </p>
+                    </div>
                   ) : (
                     <div className="mt-2 space-y-1">
-                      {first.corrected_category && (
-                        <p className={theme === 'dark' ? 'text-sm text-slate-300' : 'text-sm text-gray-700'}>
-                          Category → <span className="font-medium">{first.corrected_category}</span>
-                        </p>
+                      {(first.corrected_category || first.original_category) && (
+                        <div className="flex items-center gap-1">
+                          <span className={rowClass}>Category:</span>
+                          {first.original_category && (
+                            <span className={fromClass}>{first.original_category}</span>
+                          )}
+                          {first.original_category && first.corrected_category && (
+                            <span className={arrowClass}>→</span>
+                          )}
+                          {first.corrected_category && (
+                            <span className={toClass}>{first.corrected_category}</span>
+                          )}
+                        </div>
                       )}
-                      {first.corrected_merchant_name && (
-                        <p className={theme === 'dark' ? 'text-sm text-slate-300' : 'text-sm text-gray-700'}>
-                          Merchant → <span className="font-medium">{first.corrected_merchant_name}</span>
-                        </p>
+                      {(first.corrected_merchant_name || first.original_merchant_name) && (
+                        <div className="flex items-center gap-1">
+                          <span className={rowClass}>Merchant:</span>
+                          {first.original_merchant_name && (
+                            <span className={fromClass}>{first.original_merchant_name}</span>
+                          )}
+                          {first.original_merchant_name && first.corrected_merchant_name && (
+                            <span className={arrowClass}>→</span>
+                          )}
+                          {first.corrected_merchant_name && (
+                            <span className={toClass}>{first.corrected_merchant_name}</span>
+                          )}
+                        </div>
                       )}
                       {first.corrected_amount != null && (
-                        <p className={theme === 'dark' ? 'text-sm text-slate-300' : 'text-sm text-gray-700'}>
-                          Amount → <span className="font-medium">{formatCurrency(first.corrected_amount)}</span>
-                        </p>
+                        <div className="flex items-center gap-1">
+                          <span className={rowClass}>Amount:</span>
+                          {first.original_amount != null && (
+                            <span className={fromClass}>{formatCurrency(first.original_amount)}</span>
+                          )}
+                          {first.original_amount != null && (
+                            <span className={arrowClass}>→</span>
+                          )}
+                          <span className={toClass}>{formatCurrency(first.corrected_amount)}</span>
+                        </div>
+                      )}
+                      {first.corrected_date && (
+                        <div className="flex items-center gap-1">
+                          <span className={rowClass}>Date:</span>
+                          {first.original_date && (
+                            <span className={fromClass}>{formatShortDate(first.original_date)}</span>
+                          )}
+                          {first.original_date && (
+                            <span className={arrowClass}>→</span>
+                          )}
+                          <span className={toClass}>{formatShortDate(first.corrected_date)}</span>
+                        </div>
+                      )}
+                      {first.hidden_from_spending != null && (
+                        <div className="flex items-center gap-1">
+                          <span className={rowClass}>Hidden from spending:</span>
+                          <span className={toClass}>{first.hidden_from_spending ? 'Yes' : 'No'}</span>
+                        </div>
                       )}
                     </div>
                   )}
@@ -137,8 +196,8 @@ export function CorrectionsView({ onCorrectionDeleted }: CorrectionsViewProps) {
                 <button
                   onClick={() => handleDelete(correctionId)}
                   className={theme === 'dark'
-                    ? 'text-sm text-red-400 hover:text-red-300 font-medium'
-                    : 'text-sm text-red-600 hover:text-red-500 font-medium'
+                    ? 'text-sm text-red-400 hover:text-red-300 font-medium ml-4'
+                    : 'text-sm text-red-600 hover:text-red-500 font-medium ml-4'
                   }
                 >
                   Remove

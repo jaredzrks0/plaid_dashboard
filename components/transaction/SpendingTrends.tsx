@@ -1,13 +1,14 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useSpendingTrends } from '@/hooks/useSpendingTrends';
 import { Card, CardHeader, CardContent } from '@/components/ui/Card';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  LineChart, Line,
+  PieChart, Pie, Cell, Sector,
 } from 'recharts';
+import { MonthlyCategorySpend } from '@/types/finance';
 
 const CATEGORY_COLORS = [
   '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
@@ -15,16 +16,122 @@ const CATEGORY_COLORS = [
   '#14b8a6', '#e11d48',
 ];
 
-type TrendsPeriod = '3m' | '6m' | '1y' | 'all';
+type TrendsPeriod = '3m' | '6m' | '1y' | 'all' | 'month';
+
+function isTransfer(category: string | null | undefined): boolean {
+  return (category ?? '').toLowerCase().includes('transfer');
+}
+
+interface PieDetailOverlayProps {
+  category: string;
+  items: any[];
+  onBack: () => void;
+  theme: string;
+  formatCurrency: (v: number) => string;
+  loading?: boolean;
+}
+
+function PieDetailOverlay({ category, items, onBack, theme, formatCurrency, loading }: PieDetailOverlayProps) {
+  const totalSpent = items.reduce((sum, item) => sum + (item.transaction_amount || 0), 0);
+
+  return (
+    <div className={theme === 'dark' ? 'bg-slate-900/50 rounded-xl p-6' : 'bg-gray-50 rounded-xl p-6'}>
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          onClick={onBack}
+          className={theme === 'dark'
+            ? 'text-sm text-blue-400 hover:text-blue-300 font-medium flex items-center gap-1'
+            : 'text-sm text-blue-600 hover:text-blue-500 font-medium flex items-center gap-1'
+          }
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Back
+        </button>
+        <div>
+          <h4 className={`text-lg font-semibold ${theme === 'dark' ? 'text-slate-200' : 'text-gray-900'}`}>
+            {category}
+          </h4>
+          <p className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'}`}>
+            {items.length} transaction{items.length !== 1 ? 's' : ''} • {formatCurrency(totalSpent)}
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {loading ? (
+          <div className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-gray-500'} text-center py-4`}>
+            Loading transactions...
+          </div>
+        ) : items.length === 0 ? (
+          <div className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-gray-500'} text-center py-4`}>
+            No transactions found
+          </div>
+        ) : (
+          items.map((item, i) => (
+            <div key={i} className={`py-3 px-4 rounded-lg border ${
+              theme === 'dark'
+                ? 'bg-slate-800/30 hover:bg-slate-800/50 border-slate-700/50 hover:border-slate-700'
+                : 'bg-white hover:bg-gray-50 border-gray-200 hover:border-gray-300'
+            } transition-all`}>
+              <div className="flex justify-between items-start gap-2 mb-1">
+                <div className="flex-1">
+                  <p className={theme === 'dark' ? 'text-sm font-medium text-slate-200' : 'text-sm font-medium text-gray-900'}>
+                    {item.merchant_name || 'Unknown Merchant'}
+                  </p>
+                  <p className={`text-xs ${theme === 'dark' ? 'text-blue-400' : 'text-blue-600'}`}>
+                    {item.detailed_financial_category || item.primary_financial_category}
+                  </p>
+                </div>
+                <span className={theme === 'dark' ? 'text-sm font-semibold text-slate-200' : 'text-sm font-semibold text-gray-900'}>
+                  {formatCurrency(item.transaction_amount)}
+                </span>
+              </div>
+              <p className={`text-xs ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>
+                {new Date(item.transaction_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}
+              </p>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function SpendingTrends() {
   const { theme } = useTheme();
+  const now = new Date();
   const [period, setPeriod] = useState<TrendsPeriod>('6m');
+  const [viewMonth, setViewMonth] = useState<Date>(new Date(now.getFullYear(), now.getMonth(), 1));
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const [selectedPieSlice, setSelectedPieSlice] = useState<string | null>(null);
+  const [activeIndex, setActiveIndex] = useState<number | undefined>(undefined);
+  const [transactionsForCategory, setTransactionsForCategory] = useState<any[]>([]);
+  const [loadingTransactions, setLoadingTransactions] = useState(false);
+
+  const prevMonth = useCallback(() => {
+    setViewMonth(d => new Date(d.getFullYear(), d.getMonth() - 1, 1));
+  }, []);
+
+  const nextMonth = useCallback(() => {
+    setViewMonth(d => new Date(d.getFullYear(), d.getMonth() + 1, 1));
+  }, []);
 
   const dateRange = useMemo(() => {
-    const now = new Date();
     const maxDate = now.toISOString().split('T')[0];
     const min = new Date(now);
+
+    if (period === 'month') {
+      // Single month view
+      const first = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1);
+      const last = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 0);
+      return {
+        minDate: first.toISOString().split('T')[0],
+        maxDate: last.toISOString().split('T')[0],
+      };
+    }
+
     switch (period) {
       case '3m': min.setMonth(min.getMonth() - 3); break;
       case '6m': min.setMonth(min.getMonth() - 6); break;
@@ -32,12 +139,37 @@ export function SpendingTrends() {
       case 'all': min.setFullYear(2020); break;
     }
     return { minDate: min.toISOString().split('T')[0], maxDate };
-  }, [period]);
+  }, [period, viewMonth]);
 
   const { data, loading, error } = useSpendingTrends({
     minDate: dateRange.minDate,
     maxDate: dateRange.maxDate,
   });
+
+  // Fetch transactions when a category is selected
+  useEffect(() => {
+    if (selectedPieSlice) {
+      setLoadingTransactions(true);
+      const params = new URLSearchParams();
+      params.set('min_date', dateRange.minDate);
+      params.set('max_date', dateRange.maxDate);
+      params.set('categories', selectedPieSlice);
+      params.set('limit', '1000');
+      params.set('sort_by', 'transaction_date');
+      params.set('sort_desc', 'true');
+
+      fetch(`http://localhost:8000/transactions/?${params.toString()}`)
+        .then(res => res.json())
+        .then(result => {
+          setTransactionsForCategory(result.transactions || []);
+          setLoadingTransactions(false);
+        })
+        .catch(err => {
+          console.error('Error fetching transactions:', err);
+          setLoadingTransactions(false);
+        });
+    }
+  }, [selectedPieSlice, dateRange]);
 
   const formatCurrency = (val: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(val);
@@ -48,46 +180,76 @@ export function SpendingTrends() {
     return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
   };
 
-  // Build stacked bar chart data
-  const barChartData = useMemo(() => {
+
+  // Filter out transfers for spending data
+  const spendingCategoryData = useMemo((): MonthlyCategorySpend[] => {
     if (!data) return [];
-    const months = [...new Set(data.monthly_by_category.map(d => d.month))].sort();
-    const allCategories = [...new Set(data.monthly_by_category.map(d => d.category))];
-
-    // Take top 8 categories by total, group rest as "Other"
-    const catTotals = new Map<string, number>();
-    data.monthly_by_category.forEach(d => {
-      catTotals.set(d.category, (catTotals.get(d.category) || 0) + d.total);
-    });
-    const topCats = [...catTotals.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 8)
-      .map(([cat]) => cat);
-
-    return months.map(month => {
-      const point: Record<string, string | number> = { month: formatMonth(month) };
-      const monthData = data.monthly_by_category.filter(d => d.month === month);
-      let other = 0;
-      monthData.forEach(d => {
-        if (topCats.includes(d.category)) {
-          point[d.category] = d.total;
-        } else {
-          other += d.total;
-        }
-      });
-      if (other > 0) point['Other'] = other;
-      return { point, categories: other > 0 ? [...topCats, 'Other'] : topCats };
-    });
+    return data.monthly_by_category.filter(d => !isTransfer(d.category));
   }, [data]);
 
-  const stackedCategories = useMemo(() => {
-    if (barChartData.length === 0) return [];
-    const cats = new Set<string>();
-    barChartData.forEach(({ point }) => {
-      Object.keys(point).forEach(k => { if (k !== 'month') cats.add(k); });
+  // Income vs Spending bar chart data (excluding credit card payments from spending)
+  const incomeSpendingData = useMemo(() => {
+    if (!data || !spendingCategoryData.length) return [];
+
+    // Calculate spending excluding credit card payments
+    const spendingByMonth = new Map<string, number>();
+    spendingCategoryData.forEach(d => {
+      if (d.category !== 'Credit Card Payment') {
+        spendingByMonth.set(d.month, (spendingByMonth.get(d.month) || 0) + d.total);
+      }
     });
-    return [...cats];
-  }, [barChartData]);
+
+    return data.monthly_totals.map(d => ({
+      month: formatMonth(d.month),
+      total_income: d.total_income,
+      total_spending: spendingByMonth.get(d.month) || 0,
+    }));
+  }, [data, spendingCategoryData]);
+
+  // Pie chart: aggregate categories across the period (excluding credit card payments)
+  const pieData = useMemo(() => {
+    if (!spendingCategoryData.length) return [];
+    const totals = new Map<string, number>();
+    spendingCategoryData.forEach(d => {
+      // Exclude credit card payments from pie chart
+      if (d.category !== 'Credit Card Payment') {
+        totals.set(d.category, (totals.get(d.category) || 0) + d.total);
+      }
+    });
+    return [...totals.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([name, value]) => ({ name, value }));
+  }, [spendingCategoryData]);
+
+  // Merchant breakdown for selected pie slice
+  const sliceDetail = useMemo(() => {
+    if (!selectedPieSlice || !data) return [];
+    const merchantTotals = new Map<string, number>();
+    data.top_merchants.forEach(m => {
+      // We can't easily filter by category from top_merchants,
+      // so we approximate by listing all merchants with their totals
+      merchantTotals.set(m.merchant_name, m.total);
+    });
+    // Filter category transactions and aggregate by merchant
+    const catItems = new Map<string, number>();
+    spendingCategoryData
+      .filter(d => d.category === selectedPieSlice)
+      .forEach(d => {
+        // We only have monthly totals per category, not per merchant
+        // Show the category total per month instead
+        catItems.set(d.month, (catItems.get(d.month) || 0) + d.total);
+      });
+    return [...catItems.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([month, total]) => ({ merchant: formatMonth(month), total }));
+  }, [selectedPieSlice, data, spendingCategoryData]);
+
+  // Top merchants (exclude transfers)
+  const topMerchants = useMemo(() => {
+    if (!data) return [];
+    return data.top_merchants;
+  }, [data]);
 
   const btnClass = (active: boolean) => theme === 'dark'
     ? `px-3 py-1.5 text-sm font-medium rounded-md transition-all ${active ? 'bg-slate-700 text-slate-50' : 'text-slate-400 hover:text-slate-200'}`
@@ -119,52 +281,158 @@ export function SpendingTrends() {
 
   const gridColor = theme === 'dark' ? '#334155' : '#e5e7eb';
   const textColor = theme === 'dark' ? '#94a3b8' : '#6b7280';
+  const tooltipStyle = {
+    backgroundColor: theme === 'dark' ? '#0f172a' : '#ffffff',
+    border: `none`,
+    borderRadius: '12px',
+    color: theme === 'dark' ? '#f1f5f9' : '#1f2937',
+    padding: '12px 16px',
+    boxShadow: theme === 'dark'
+      ? '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
+      : '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+    fontWeight: '500',
+    fontSize: '14px',
+  };
+
+  const monthLabel = viewMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const currentYear = viewMonth.getFullYear();
+  const currentMonth = viewMonth.getMonth();
+
+  // Custom tooltip for better styling
+  const CustomTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className={`rounded-lg px-4 py-3 ${
+          theme === 'dark'
+            ? 'bg-slate-900 text-slate-50 shadow-xl'
+            : 'bg-white text-gray-900 shadow-xl'
+        }`}>
+          <p className={`text-sm font-semibold mb-2 ${theme === 'dark' ? 'text-slate-300' : 'text-gray-600'}`}>
+            {payload[0].payload?.month || 'Month'}
+          </p>
+          {payload.map((entry: any, idx: number) => (
+            <p key={idx} className={`text-sm font-medium ${
+              entry.name === 'Income'
+                ? (theme === 'dark' ? 'text-emerald-400' : 'text-emerald-600')
+                : (theme === 'dark' ? 'text-red-400' : 'text-red-600')
+            }`}>
+              {entry.name}: {formatCurrency(entry.value)}
+            </p>
+          ))}
+        </div>
+      );
+    }
+    return null;
+  };
 
   return (
     <div className="space-y-6">
       {/* Period selector */}
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-6">
+        {/* Month navigation - takes up fixed space */}
+        <div className={`w-96 ${period === 'month' ? 'visible' : 'invisible'}`}>
+          {period === 'month' && (
+            <div className="relative flex items-center justify-between gap-2">
+              <button
+                onClick={prevMonth}
+                className={theme === 'dark'
+                  ? 'p-2 text-slate-400 hover:text-slate-200 rounded-md hover:bg-slate-700/30'
+                  : 'p-2 text-gray-600 hover:text-gray-900 rounded-md hover:bg-gray-200'
+                }
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              <button
+                onClick={() => setShowMonthPicker(!showMonthPicker)}
+                className={theme === 'dark'
+                  ? 'flex-1 px-4 py-2 text-base font-semibold text-slate-200 rounded-md bg-slate-700/50 hover:bg-slate-700 transition-all'
+                  : 'flex-1 px-4 py-2 text-base font-semibold text-gray-900 rounded-md bg-gray-100 hover:bg-gray-200 transition-all'
+                }
+              >
+                {monthLabel}
+              </button>
+              <button
+                onClick={nextMonth}
+                className={theme === 'dark'
+                  ? 'p-2 text-slate-400 hover:text-slate-200 rounded-md hover:bg-slate-700/30'
+                  : 'p-2 text-gray-600 hover:text-gray-900 rounded-md hover:bg-gray-200'
+                }
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+
+              {/* Month picker popup */}
+              {showMonthPicker && (
+                <div className={`absolute top-full mt-2 left-0 right-0 p-4 rounded-lg shadow-lg z-20 ${
+                  theme === 'dark' ? 'bg-slate-800 border border-slate-700' : 'bg-white border border-gray-200'
+                }`}>
+                  {/* Year selector */}
+                  <div className="flex items-center justify-between mb-4">
+                    <button
+                      onClick={() => setViewMonth(new Date(currentYear - 1, currentMonth, 1))}
+                      className={theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-gray-600 hover:text-gray-900'}
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      </svg>
+                    </button>
+                    <span className={`text-sm font-semibold ${theme === 'dark' ? 'text-slate-300' : 'text-gray-700'}`}>
+                      {currentYear}
+                    </span>
+                    <button
+                      onClick={() => setViewMonth(new Date(currentYear + 1, currentMonth, 1))}
+                      className={theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-gray-600 hover:text-gray-900'}
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {/* Month grid */}
+                  <div className="grid grid-cols-3 gap-2">
+                    {months.map((month, idx) => (
+                      <button
+                        key={month}
+                        onClick={() => {
+                          setViewMonth(new Date(currentYear, idx, 1));
+                          setShowMonthPicker(false);
+                        }}
+                        className={`py-2 px-3 text-sm rounded font-medium transition-all ${
+                          idx === currentMonth
+                            ? theme === 'dark'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-blue-500 text-white'
+                            : theme === 'dark'
+                              ? 'text-slate-300 hover:bg-slate-700'
+                              : 'text-gray-700 hover:bg-gray-100'
+                        }`}
+                      >
+                        {month}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         <div className={theme === 'dark' ? 'flex gap-1 bg-slate-800/30 rounded-lg p-1' : 'flex gap-1 bg-gray-100 rounded-lg p-1'}>
-          {(['3m', '6m', '1y', 'all'] as TrendsPeriod[]).map(p => (
-            <button key={p} onClick={() => setPeriod(p)} className={btnClass(period === p)}>
-              {p === 'all' ? 'All' : p.toUpperCase()}
+          {(['month', '3m', '6m', '1y', 'all'] as TrendsPeriod[]).map(p => (
+            <button key={p} onClick={() => { setPeriod(p); setShowMonthPicker(false); }} className={btnClass(period === p)}>
+              {p === 'month' ? 'Month' : p === 'all' ? 'All' : p.toUpperCase()}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Monthly spending by category */}
-      <Card>
-        <CardHeader>
-          <h3 className={theme === 'dark' ? 'text-lg font-semibold text-slate-50' : 'text-lg font-semibold text-gray-900'}>
-            Monthly Spending by Category
-          </h3>
-        </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={400}>
-            <BarChart data={barChartData.map(d => d.point)}>
-              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
-              <XAxis dataKey="month" tick={{ fill: textColor, fontSize: 12 }} />
-              <YAxis tick={{ fill: textColor, fontSize: 12 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: theme === 'dark' ? '#1e293b' : '#fff',
-                  border: `1px solid ${theme === 'dark' ? '#334155' : '#e5e7eb'}`,
-                  borderRadius: '8px',
-                  color: theme === 'dark' ? '#e2e8f0' : '#111827',
-                }}
-                formatter={(value) => formatCurrency(Number(value))}
-              />
-              <Legend />
-              {stackedCategories.map((cat, i) => (
-                <Bar key={cat} dataKey={cat} stackId="a" fill={CATEGORY_COLORS[i % CATEGORY_COLORS.length]} />
-              ))}
-            </BarChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
-
-      {/* Income vs Spending over time */}
+      {/* Income vs Spending — grouped BarChart */}
       <Card>
         <CardHeader>
           <h3 className={theme === 'dark' ? 'text-lg font-semibold text-slate-50' : 'text-lg font-semibold text-gray-900'}>
@@ -173,24 +441,83 @@ export function SpendingTrends() {
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={data.monthly_totals.map(d => ({ ...d, month: formatMonth(d.month) }))}>
+            <BarChart data={incomeSpendingData}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
               <XAxis dataKey="month" tick={{ fill: textColor, fontSize: 12 }} />
               <YAxis tick={{ fill: textColor, fontSize: 12 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: theme === 'dark' ? '#1e293b' : '#fff',
-                  border: `1px solid ${theme === 'dark' ? '#334155' : '#e5e7eb'}`,
-                  borderRadius: '8px',
-                  color: theme === 'dark' ? '#e2e8f0' : '#111827',
-                }}
-                formatter={(value) => formatCurrency(Number(value))}
-              />
+              <Tooltip content={<CustomTooltip />} />
               <Legend />
-              <Line type="monotone" dataKey="total_income" name="Income" stroke="#10b981" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="total_spending" name="Spending" stroke="#ef4444" strokeWidth={2} dot={false} />
-            </LineChart>
+              <Bar dataKey="total_income" name="Income" fill="#10b981" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="total_spending" name="Spending" fill="#ef4444" radius={[3, 3, 0, 0]} />
+            </BarChart>
           </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      {/* Spending by Category — PieChart */}
+      <Card>
+        <CardHeader>
+          <h3 className={theme === 'dark' ? 'text-lg font-semibold text-slate-50' : 'text-lg font-semibold text-gray-900'}>
+            Spending by Category
+          </h3>
+        </CardHeader>
+        <CardContent>
+          <div className="flex gap-6" style={{ height: 360 }}>
+            {/* Pie Chart - always visible, takes less width when detail is shown */}
+            <div style={{ width: selectedPieSlice ? '50%' : '100%', transition: 'width 0.3s ease' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={pieData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={130}
+                    innerRadius={60}
+                    paddingAngle={2}
+                    onMouseEnter={(_: unknown, index: number) => setActiveIndex(index)}
+                    onMouseLeave={() => setActiveIndex(undefined)}
+                    onClick={(entry: { name: string }) => setSelectedPieSlice(entry.name)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    {pieData.map((entry, index) => (
+                      <Cell
+                        key={entry.name}
+                        fill={CATEGORY_COLORS[index % CATEGORY_COLORS.length]}
+                        opacity={activeIndex === undefined || activeIndex === index ? 1 : 0.6}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend
+                    formatter={(value) => (
+                      <span style={{ color: textColor, fontSize: 12 }}>{value}</span>
+                    )}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Detail Panel - shows when a slice is selected */}
+            {selectedPieSlice && (
+              <div style={{ width: '50%', overflowY: 'auto' }}>
+                <PieDetailOverlay
+                  category={selectedPieSlice}
+                  items={transactionsForCategory}
+                  onBack={() => setSelectedPieSlice(null)}
+                  theme={theme}
+                  formatCurrency={formatCurrency}
+                  loading={loadingTransactions}
+                />
+              </div>
+            )}
+          </div>
+          {!selectedPieSlice && (
+            <p className={`text-center text-xs mt-2 ${theme === 'dark' ? 'text-slate-500' : 'text-gray-400'}`}>
+              Click a slice to see monthly breakdown
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -224,7 +551,7 @@ export function SpendingTrends() {
               </tr>
             </thead>
             <tbody>
-              {data.top_merchants.map((m, i) => (
+              {topMerchants.map((m, i) => (
                 <tr key={m.merchant_name} className={theme === 'dark'
                   ? 'border-t border-slate-700/30 hover:bg-slate-700/30'
                   : 'border-t border-gray-100 hover:bg-gray-50'

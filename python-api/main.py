@@ -107,31 +107,78 @@ TRANSACTION_SCHEMA = {
     'transaction_month': pl.Int32,
     'transaction_day': pl.Int32,
     'is_corrected': pl.Boolean,
+    'hidden_from_spending': pl.Boolean,
 }
 
 
 def _read_corrections() -> pl.DataFrame:
     """Read all correction records from S3. Returns empty DataFrame if none exist."""
-    fallback_df = pl.DataFrame(schema={
-                'correction_id': pl.Utf8,
-                'transaction_id': pl.Utf8,
-                'correction_type': pl.Utf8,
-                'corrected_category': pl.Utf8,
-                'corrected_merchant_name': pl.Utf8,
-                'corrected_amount': pl.Float64,
-                'split_index': pl.Int32,
-                'split_description': pl.Utf8,
-                'created_at': pl.Datetime,
-            })
+    expected_schema = {
+        'correction_id': pl.Utf8,
+        'transaction_id': pl.Utf8,
+        'correction_type': pl.Utf8,
+        'corrected_category': pl.Utf8,
+        'corrected_detail': pl.Utf8,
+        'corrected_merchant_name': pl.Utf8,
+        'corrected_amount': pl.Float64,
+        'corrected_date': pl.Datetime,
+        'original_category': pl.Utf8,
+        'original_detail': pl.Utf8,
+        'original_merchant_name': pl.Utf8,
+        'original_amount': pl.Float64,
+        'original_date': pl.Datetime,
+        'hidden_from_spending': pl.Boolean,
+        'split_index': pl.Int32,
+        'split_description': pl.Utf8,
+        'created_at': pl.Datetime,
+    }
+
+    fallback_df = pl.DataFrame(schema=expected_schema)
+
     try:
         files = cloud_reader.list_files(
             bucket='zirk-finance-tracker',
             prefix='transaction/corrections/'
         )
         if not files:
+            print("No correction files found in S3")
             return fallback_df
-        return pl.read_parquet(CORRECTIONS_PATH + "*")
-    except Exception:
+
+        print(f"Reading {len(files)} correction file(s) from S3")
+
+        # Read each file separately and cast to consistent types
+        # This avoids "String != Null" schema errors when combining files
+        dfs = []
+        for file_path in files:
+            try:
+                df = pl.read_parquet(file_path)
+
+                # Cast all string columns to ensure consistency
+                cast_cols = {}
+                for col in df.columns:
+                    if col in ['corrected_category', 'corrected_detail', 'corrected_merchant_name',
+                              'original_category', 'original_detail', 'original_merchant_name']:
+                        if df[col].dtype != pl.Utf8:
+                            cast_cols[col] = pl.Utf8
+
+                if cast_cols:
+                    df = df.with_columns([pl.col(c).cast(t) for c, t in cast_cols.items()])
+
+                dfs.append(df)
+            except Exception as e:
+                print(f"Warning: Could not read file {file_path}: {e}")
+
+        if not dfs:
+            print("No corrections could be read")
+            return fallback_df
+
+        corrections_df = pl.concat(dfs)
+        print(f"✓ Successfully read {corrections_df.height} corrections from {len(dfs)} files")
+        return corrections_df
+    except Exception as e:
+        print(f"Error reading corrections from S3: {e}")
+        import traceback
+        traceback.print_exc()
         return fallback_df
 
 
@@ -162,39 +209,109 @@ def _load_transactions(
 
 def _apply_corrections(df: pl.DataFrame, corrections: pl.DataFrame) -> pl.DataFrame:
     """Apply corrections and splits to the transactions DataFrame."""
+    # Ensure hidden_from_spending column exists
+    if 'hidden_from_spending' not in df.columns:
+        df = df.with_columns(pl.lit(None).cast(pl.Boolean).alias('hidden_from_spending'))
+
     if corrections.height == 0:
+        print("No corrections found")
         return df.with_columns(pl.lit(False).alias('is_corrected'))
+
+    print(f"Found {corrections.height} correction records")
+    print(f"Corrections columns: {corrections.columns}")
+    if corrections.height > 0:
+        print(f"Sample correction: {corrections.limit(1).to_dicts()}")
+
+    # Ensure corrections has all expected columns (backward compat with old parquet files)
+    for col_name, dtype in [
+        ('corrected_detail', pl.Utf8),
+        ('corrected_date', pl.Datetime),
+        ('original_category', pl.Utf8),
+        ('original_detail', pl.Utf8),
+        ('original_merchant_name', pl.Utf8),
+        ('original_amount', pl.Float64),
+        ('original_date', pl.Datetime),
+        ('hidden_from_spending', pl.Boolean),
+    ]:
+        if col_name not in corrections.columns:
+            corrections = corrections.with_columns(pl.lit(None).cast(dtype).alias(col_name))
 
     edits = corrections.filter(pl.col('correction_type') == 'edit')
     splits = corrections.filter(pl.col('correction_type') == 'split')
+    date_corrections = corrections.filter(pl.col('correction_type') == 'date')
+    hide_corrections = corrections.filter(pl.col('correction_type') == 'hide')
+
+    print(f"Edits: {edits.height}, Splits: {splits.height}, Date: {date_corrections.height}, Hide: {hide_corrections.height}")
 
     # Apply simple edits via left join
     if edits.height > 0:
+        print(f"Applying {edits.height} edit corrections")
         edit_cols = edits.select([
             'transaction_id',
             'corrected_category',
+            'corrected_detail',
             'corrected_merchant_name',
             'corrected_amount',
+            'corrected_date',
         ]).unique(subset=['transaction_id'], keep='last')
 
+        print(f"Edit cols to apply: {edit_cols.to_dicts()}")
+        print(f"Sample transaction IDs from main df: {df.select('transaction_id').limit(3).to_series().to_list()}")
+
         df = df.join(edit_cols, on='transaction_id', how='left')
+
+        # Check how many rows were actually matched
+        matched = df.filter(pl.col('corrected_category').is_not_null()).height
+        print(f"Matched {matched} transactions with corrections")
 
         # Coalesce corrected fields over originals
         has_correction = (
             pl.col('corrected_category').is_not_null()
+            | pl.col('corrected_detail').is_not_null()
             | pl.col('corrected_merchant_name').is_not_null()
             | pl.col('corrected_amount').is_not_null()
+            | pl.col('corrected_date').is_not_null()
         )
 
         # Remember coalesce keeps the first non-null from left to right
         df = df.with_columns([
             pl.coalesce(['corrected_category', 'primary_financial_category']).alias('primary_financial_category'),
+            pl.coalesce(['corrected_detail', 'detailed_financial_category']).alias('detailed_financial_category'),
             pl.coalesce(['corrected_merchant_name', 'merchant_name']).alias('merchant_name'),
             pl.coalesce(['corrected_amount', 'transaction_amount']).alias('transaction_amount'),
+            pl.coalesce(['corrected_date', 'transaction_date']).alias('transaction_date'),
             has_correction.alias('is_corrected'),
-        ]).drop(['corrected_category', 'corrected_merchant_name', 'corrected_amount'])
+        ]).drop(['corrected_category', 'corrected_detail', 'corrected_merchant_name', 'corrected_amount', 'corrected_date'])
     else:
         df = df.with_columns(pl.lit(False).alias('is_corrected'))
+
+    # Apply date-only corrections
+    if date_corrections.height > 0:
+        date_cols = date_corrections.select([
+            'transaction_id', 'corrected_date'
+        ]).unique(subset=['transaction_id'], keep='last')
+        df = df.join(date_cols, on='transaction_id', how='left')
+        df = df.with_columns([
+            pl.coalesce(['corrected_date', 'transaction_date']).alias('transaction_date'),
+            pl.when(pl.col('corrected_date').is_not_null())
+              .then(pl.lit(True))
+              .otherwise(pl.col('is_corrected'))
+              .alias('is_corrected'),
+        ]).drop(['corrected_date'])
+
+    # Apply hide corrections
+    if hide_corrections.height > 0:
+        hide_cols = hide_corrections.select([
+            'transaction_id', 'hidden_from_spending'
+        ]).rename({'hidden_from_spending': 'corrected_hidden'}).unique(subset=['transaction_id'], keep='last')
+        df = df.join(hide_cols, on='transaction_id', how='left')
+        df = df.with_columns([
+            pl.coalesce(['corrected_hidden', 'hidden_from_spending']).alias('hidden_from_spending'),
+            pl.when(pl.col('corrected_hidden').is_not_null())
+              .then(pl.lit(True))
+              .otherwise(pl.col('is_corrected'))
+              .alias('is_corrected'),
+        ]).drop(['corrected_hidden'])
 
     # Apply splits: replace original rows with split sub-rows
     if splits.height > 0:
@@ -270,6 +387,15 @@ def get_transactions(
     offset: int = 0,
 ):
     df = _load_transactions(min_date, max_date, account_ids)
+    # Corrections are already applied by _load_transactions() via _apply_corrections()
+
+    # Capture available filter options BEFORE applying category/channel/search filters
+    all_categories = sorted(
+        df.select('primary_financial_category').drop_nulls().unique().to_series().to_list()
+    )
+    all_accounts = sorted(
+        df.select('account_id').drop_nulls().unique().to_series().to_list()
+    )
 
     # Category filter
     if categories:
@@ -289,14 +415,6 @@ def get_transactions(
         )
 
     total_count = df.height
-
-    # Get unique values for filter dropdowns
-    all_categories = sorted(
-        df.select('primary_financial_category').drop_nulls().unique().to_series().to_list()
-    )
-    all_accounts = sorted(
-        df.select('account_id').drop_nulls().unique().to_series().to_list()
-    )
 
     # Sort
     if sort_by in df.columns:
@@ -323,8 +441,12 @@ def get_monthly_summary(
 ):
     df = _load_transactions(min_date, max_date, account_ids)
 
-    # Monthly by category (spending only = positive amounts)
-    spending = df.filter(pl.col('transaction_amount') > 0)
+    # Monthly by category (spending only = positive amounts, exclude transfers and hidden)
+    spending = df.filter(
+        (pl.col('transaction_amount') > 0)
+        & (~pl.col('hidden_from_spending').fill_null(False))
+        & (~pl.col('primary_financial_category').fill_null('').str.to_lowercase().str.contains('transfer'))
+    )
     monthly_cat = (
         spending
         .with_columns(
@@ -412,6 +534,12 @@ def get_corrections():
             corrected_category=r.get('corrected_category'),
             corrected_merchant_name=r.get('corrected_merchant_name'),
             corrected_amount=r.get('corrected_amount'),
+            corrected_date=r.get('corrected_date'),
+            original_category=r.get('original_category'),
+            original_merchant_name=r.get('original_merchant_name'),
+            original_amount=r.get('original_amount'),
+            original_date=r.get('original_date'),
+            hidden_from_spending=r.get('hidden_from_spending'),
             created_at=r['created_at'],
         ))
 
@@ -423,17 +551,56 @@ def create_correction(correction: CorrectionCreate):
     now = datetime.now(tz=None)
     correction_id = str(uuid.uuid4())
 
+    # Validate that at least one field was corrected
+    if not any([
+        correction.corrected_category,
+        correction.corrected_detail,
+        correction.corrected_merchant_name,
+        correction.corrected_amount,
+        correction.corrected_date,
+        correction.hidden_from_spending is not None,
+    ]):
+        raise ValueError("No corrections provided")
+
+    # Determine correction_type
+    if correction.hidden_from_spending is not None and not any([
+        correction.corrected_category, correction.corrected_detail,
+        correction.corrected_merchant_name, correction.corrected_amount,
+        correction.corrected_date,
+    ]):
+        correction_type = 'hide'
+    elif correction.corrected_date is not None and not any([
+        correction.corrected_category, correction.corrected_detail,
+        correction.corrected_merchant_name, correction.corrected_amount,
+        correction.hidden_from_spending,
+    ]):
+        correction_type = 'date'
+    else:
+        correction_type = 'edit'
+
+    print(f"Creating {correction_type} correction for transaction {correction.transaction_id}")
+
     record = pl.DataFrame({
         'correction_id': [correction_id],
         'transaction_id': [correction.transaction_id],
-        'correction_type': ['edit'],
+        'correction_type': [correction_type],
         'corrected_category': [correction.corrected_category],
+        'corrected_detail': [correction.corrected_detail],
         'corrected_merchant_name': [correction.corrected_merchant_name],
         'corrected_amount': [correction.corrected_amount],
+        'corrected_date': [correction.corrected_date],
+        'original_category': [correction.original_category],
+        'original_detail': [correction.original_detail],
+        'original_merchant_name': [correction.original_merchant_name],
+        'original_amount': [correction.original_amount],
+        'original_date': [correction.original_date],
+        'hidden_from_spending': [correction.hidden_from_spending],
         'split_index': [None],
         'split_description': [None],
         'created_at': [now],
     }).cast({
+        'corrected_date': pl.Datetime,
+        'original_date': pl.Datetime,
         'split_index': pl.Int32,
         'created_at': pl.Datetime,
     })
@@ -449,10 +616,18 @@ def create_correction(correction: CorrectionCreate):
     return CorrectionRecord(
         correction_id=correction_id,
         transaction_id=correction.transaction_id,
-        correction_type='edit',
+        correction_type=correction_type,
         corrected_category=correction.corrected_category,
+        corrected_detail=correction.corrected_detail,
         corrected_merchant_name=correction.corrected_merchant_name,
         corrected_amount=correction.corrected_amount,
+        corrected_date=correction.corrected_date,
+        original_category=correction.original_category,
+        original_detail=correction.original_detail,
+        original_merchant_name=correction.original_merchant_name,
+        original_amount=correction.original_amount,
+        original_date=correction.original_date,
+        hidden_from_spending=correction.hidden_from_spending,
         created_at=now,
     )
 

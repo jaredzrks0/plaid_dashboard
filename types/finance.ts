@@ -82,6 +82,7 @@ export interface Transaction {
   transaction_month: number | null;
   transaction_day: number | null;
   is_corrected: boolean;
+  hidden_from_spending: boolean | null;
 }
 
 export interface TransactionsResponse {
@@ -118,8 +119,16 @@ export interface TransactionSummary {
 export interface CorrectionCreate {
   transaction_id: string;
   corrected_category?: string;
+  corrected_detail?: string;
   corrected_merchant_name?: string;
   corrected_amount?: number;
+  corrected_date?: string;
+  original_category?: string;
+  original_detail?: string;
+  original_merchant_name?: string;
+  original_amount?: number;
+  original_date?: string;
+  hidden_from_spending?: boolean;
 }
 
 export interface SplitItem {
@@ -139,18 +148,26 @@ export interface CorrectionRecord {
   transaction_id: string;
   correction_type: string;
   corrected_category: string | null;
+  corrected_detail: string | null;
   corrected_merchant_name: string | null;
   corrected_amount: number | null;
+  corrected_date: string | null;
+  original_category: string | null;
+  original_detail: string | null;
+  original_merchant_name: string | null;
+  original_amount: number | null;
+  original_date: string | null;
+  hidden_from_spending: boolean | null;
   created_at: string;
 }
+
+export type PeriodOption = 'current' | 'prior' | 'specific' | 'l3' | 'l6' | 'ytd';
 
 export interface TransactionFilters {
   search: string;
   categories: string[];
   accountIds: string[];
   paymentChannels: string[];
-  minDate: string;
-  maxDate: string;
   sortBy: string;
   sortDesc: boolean;
 }

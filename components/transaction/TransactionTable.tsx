@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Transaction, TransactionFilters, CorrectionCreate, SplitCreate } from '@/types/finance';
 import { Badge } from '@/components/ui/Badge';
@@ -12,11 +12,10 @@ interface TransactionTableProps {
   categories: string[];
   filters: TransactionFilters;
   onFiltersChange: (filters: TransactionFilters) => void;
-  limit: number;
-  offset: number;
-  onPageChange: (offset: number) => void;
   onSubmitCorrection: (correction: CorrectionCreate) => Promise<boolean>;
   onSubmitSplit: (split: SplitCreate) => Promise<boolean>;
+  onToggleHidden?: (transaction: Transaction, hidden: boolean) => Promise<boolean>;
+  onTransactionUpdated?: (transaction: Transaction) => void;
 }
 
 export function TransactionTable({
@@ -25,14 +24,27 @@ export function TransactionTable({
   categories,
   filters,
   onFiltersChange,
-  limit,
-  offset,
-  onPageChange,
   onSubmitCorrection,
   onSubmitSplit,
+  onToggleHidden,
+  onTransactionUpdated,
 }: TransactionTableProps) {
   const { theme } = useTheme();
+  const [localTransactions, setLocalTransactions] = useState<Transaction[]>(transactions);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+
+  // Update local transactions when props change
+  useEffect(() => {
+    setLocalTransactions(transactions);
+  }, [transactions]);
+
+  // Extract unique detailed categories from transactions
+  const detailedCategories = Array.from(
+    new Set(localTransactions
+      .map(t => t.detailed_financial_category)
+      .filter((d): d is string => d !== null && d !== undefined)
+    )
+  ).sort();
 
   const formatCurrency = (val: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
@@ -54,6 +66,70 @@ export function TransactionTable({
     }
   };
 
+  const handleToggleHidden = async (transaction: Transaction) => {
+    const newHiddenState = !transaction.hidden_from_spending;
+
+    // Optimistic update: update local state immediately
+    setLocalTransactions(prev =>
+      prev.map(t =>
+        t.transaction_id === transaction.transaction_id
+          ? { ...t, hidden_from_spending: newHiddenState }
+          : t
+      )
+    );
+
+    // Call the parent handler
+    if (onToggleHidden) {
+      const success = await onToggleHidden(transaction, newHiddenState);
+      if (!success) {
+        // Revert on failure
+        setLocalTransactions(prev =>
+          prev.map(t =>
+            t.transaction_id === transaction.transaction_id
+              ? { ...t, hidden_from_spending: transaction.hidden_from_spending }
+              : t
+          )
+        );
+      }
+    }
+  };
+
+  const handleCorrectionSubmit = async (correction: CorrectionCreate) => {
+    console.log('Table submitting correction:', correction);
+    const success = await onSubmitCorrection(correction);
+    console.log('Correction submission result:', success);
+
+    if (success) {
+      // Update local state with any changes from the correction
+      const updatedTxn = localTransactions.find(t => t.transaction_id === correction.transaction_id);
+      if (updatedTxn) {
+        const newTxn = { ...updatedTxn };
+        // Mark as corrected if any correction fields were provided
+        if (correction.corrected_category !== undefined ||
+            correction.corrected_detail !== undefined ||
+            correction.corrected_merchant_name !== undefined ||
+            correction.corrected_amount !== undefined ||
+            correction.corrected_date !== undefined ||
+            correction.hidden_from_spending !== undefined) {
+          newTxn.is_corrected = true;
+        }
+        if (correction.corrected_category !== undefined) newTxn.primary_financial_category = correction.corrected_category;
+        if (correction.corrected_detail !== undefined) newTxn.detailed_financial_category = correction.corrected_detail;
+        if (correction.corrected_merchant_name !== undefined) newTxn.merchant_name = correction.corrected_merchant_name;
+        if (correction.corrected_amount !== undefined) newTxn.transaction_amount = correction.corrected_amount;
+        if (correction.corrected_date !== undefined) newTxn.transaction_date = correction.corrected_date;
+        if (correction.hidden_from_spending !== undefined) newTxn.hidden_from_spending = correction.hidden_from_spending;
+
+        console.log('Updated transaction locally:', newTxn);
+        setLocalTransactions(prev =>
+          prev.map(t => t.transaction_id === correction.transaction_id ? newTxn : t)
+        );
+        onTransactionUpdated?.(newTxn);
+      }
+    }
+    return success;
+  };
+
   const SortIcon = ({ column }: { column: string }) => {
     if (filters.sortBy !== column) return null;
     return (
@@ -63,9 +139,6 @@ export function TransactionTable({
       </svg>
     );
   };
-
-  const totalPages = Math.ceil(totalCount / limit);
-  const currentPage = Math.floor(offset / limit) + 1;
 
   const thClass = theme === 'dark'
     ? 'px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider cursor-pointer hover:text-slate-200 select-none'
@@ -92,16 +165,16 @@ export function TransactionTable({
                 </th>
                 <th className={thClass}>Description</th>
                 <th className={thClass}>Category</th>
+                <th className={thClass}>Detail</th>
                 <th className={thClass} onClick={() => handleSort('transaction_amount')}>
                   Amount <SortIcon column="transaction_amount" />
                 </th>
-                <th className={thClass}>Channel</th>
                 <th className={thClass}>Status</th>
                 <th className={`${thClass} text-right`}>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {transactions.length === 0 ? (
+              {localTransactions.length === 0 ? (
                 <tr>
                   <td colSpan={7} className={`${tdClass} text-center py-12`}>
                     <p className={theme === 'dark' ? 'text-slate-500' : 'text-gray-400'}>
@@ -110,7 +183,7 @@ export function TransactionTable({
                   </td>
                 </tr>
               ) : (
-                transactions.map(txn => (
+                localTransactions.map(txn => (
                   <tr key={txn.transaction_id} className={rowClass}>
                     <td className={`${tdClass} whitespace-nowrap`}>
                       {formatDate(txn.transaction_date)}
@@ -136,6 +209,9 @@ export function TransactionTable({
                         {txn.is_split && (
                           <Badge variant="default">Split</Badge>
                         )}
+                        {txn.hidden_from_spending && (
+                          <Badge variant="default">Hidden</Badge>
+                        )}
                       </div>
                     </td>
                     <td className={tdClass}>
@@ -148,17 +224,22 @@ export function TransactionTable({
                         </span>
                       )}
                     </td>
+                    <td className={tdClass}>
+                      {txn.detailed_financial_category && (
+                        <span className={theme === 'dark'
+                          ? 'inline-block px-2 py-0.5 rounded text-xs bg-slate-800 text-slate-400 border border-slate-700/50'
+                          : 'inline-block px-2 py-0.5 rounded text-xs bg-blue-50 text-blue-600 border border-blue-100'
+                        }>
+                          {txn.detailed_financial_category}
+                        </span>
+                      )}
+                    </td>
                     <td className={`${tdClass} whitespace-nowrap font-medium ${
                       txn.transaction_amount < 0
                         ? (theme === 'dark' ? 'text-emerald-400' : 'text-emerald-600')
                         : (theme === 'dark' ? 'text-slate-200' : 'text-gray-900')
                     }`}>
                       {formatCurrency(txn.transaction_amount)}
-                    </td>
-                    <td className={tdClass}>
-                      {txn.payment_channel && (
-                        <span className="capitalize text-xs">{txn.payment_channel}</span>
-                      )}
                     </td>
                     <td className={tdClass}>
                       {txn.transaction_pending ? (
@@ -168,15 +249,29 @@ export function TransactionTable({
                       )}
                     </td>
                     <td className={`${tdClass} text-right`}>
-                      <button
-                        onClick={() => setEditingTransaction(txn)}
-                        className={theme === 'dark'
-                          ? 'text-xs font-medium text-blue-400 hover:text-blue-300'
-                          : 'text-xs font-medium text-blue-600 hover:text-blue-500'
-                        }
-                      >
-                        Edit
-                      </button>
+                      <div className="flex items-center justify-end gap-3">
+                        {onToggleHidden && (
+                          <button
+                            onClick={() => handleToggleHidden(txn)}
+                            className={theme === 'dark'
+                              ? `text-xs font-medium ${txn.hidden_from_spending ? 'text-amber-400 hover:text-amber-300' : 'text-slate-500 hover:text-slate-300'}`
+                              : `text-xs font-medium ${txn.hidden_from_spending ? 'text-amber-600 hover:text-amber-500' : 'text-gray-400 hover:text-gray-600'}`
+                            }
+                            title={txn.hidden_from_spending ? 'Show in spending' : 'Hide from spending'}
+                          >
+                            {txn.hidden_from_spending ? 'Unhide' : 'Hide'}
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setEditingTransaction(txn)}
+                          className={theme === 'dark'
+                            ? 'text-xs font-medium text-blue-400 hover:text-blue-300'
+                            : 'text-xs font-medium text-blue-600 hover:text-blue-500'
+                          }
+                        >
+                          Edit
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -185,40 +280,15 @@ export function TransactionTable({
           </table>
         </div>
 
-        {/* Pagination */}
+        {/* Footer: total count only */}
         {totalCount > 0 && (
           <div className={theme === 'dark'
-            ? 'px-4 py-3 border-t border-slate-700/50 flex items-center justify-between'
-            : 'px-4 py-3 border-t border-gray-200 flex items-center justify-between'
+            ? 'px-4 py-3 border-t border-slate-700/50'
+            : 'px-4 py-3 border-t border-gray-200'
           }>
             <p className={theme === 'dark' ? 'text-sm text-slate-400' : 'text-sm text-gray-600'}>
-              Showing {offset + 1}–{Math.min(offset + limit, totalCount)} of {totalCount}
+              {totalCount} transaction{totalCount !== 1 ? 's' : ''}
             </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => onPageChange(Math.max(0, offset - limit))}
-                disabled={offset === 0}
-                className={theme === 'dark'
-                  ? `px-3 py-1.5 text-sm rounded-lg ${offset === 0 ? 'text-slate-600 cursor-not-allowed' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`
-                  : `px-3 py-1.5 text-sm rounded-lg ${offset === 0 ? 'text-gray-300 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`
-                }
-              >
-                Previous
-              </button>
-              <span className={theme === 'dark' ? 'px-3 py-1.5 text-sm text-slate-400' : 'px-3 py-1.5 text-sm text-gray-600'}>
-                Page {currentPage} of {totalPages}
-              </span>
-              <button
-                onClick={() => onPageChange(offset + limit)}
-                disabled={offset + limit >= totalCount}
-                className={theme === 'dark'
-                  ? `px-3 py-1.5 text-sm rounded-lg ${offset + limit >= totalCount ? 'text-slate-600 cursor-not-allowed' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`
-                  : `px-3 py-1.5 text-sm rounded-lg ${offset + limit >= totalCount ? 'text-gray-300 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`
-                }
-              >
-                Next
-              </button>
-            </div>
           </div>
         )}
       </div>
@@ -227,7 +297,8 @@ export function TransactionTable({
         <CorrectionModal
           transaction={editingTransaction}
           categories={categories}
-          onSubmitCorrection={onSubmitCorrection}
+          detailedCategories={detailedCategories}
+          onSubmitCorrection={handleCorrectionSubmit}
           onSubmitSplit={onSubmitSplit}
           onClose={() => setEditingTransaction(null)}
         />

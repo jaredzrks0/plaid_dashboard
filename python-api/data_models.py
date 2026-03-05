@@ -49,6 +49,7 @@ class TransactionRow(BaseModel):
     transaction_month: Optional[int] = None
     transaction_day: Optional[int] = None
     is_corrected: bool = False
+    hidden_from_spending: Optional[bool] = None
 
 
 class TransactionsResponse(BaseModel):
@@ -85,17 +86,33 @@ class TransactionSummaryResponse(BaseModel):
 class CorrectionCreate(BaseModel):
     transaction_id: str
     corrected_category: Optional[str] = None
+    corrected_detail: Optional[str] = None
     corrected_merchant_name: Optional[str] = None
     corrected_amount: Optional[float] = None
+    corrected_date: Optional[datetime] = None
+    original_category: Optional[str] = None
+    original_detail: Optional[str] = None
+    original_merchant_name: Optional[str] = None
+    original_amount: Optional[float] = None
+    original_date: Optional[datetime] = None
+    hidden_from_spending: Optional[bool] = None
 
 
 class CorrectionRecord(BaseModel):
     correction_id: str
     transaction_id: str
-    correction_type: str  # "edit" or "split"
+    correction_type: str  # "edit", "split", "date", or "hide"
     corrected_category: Optional[str] = None
+    corrected_detail: Optional[str] = None
     corrected_merchant_name: Optional[str] = None
     corrected_amount: Optional[float] = None
+    corrected_date: Optional[datetime] = None
+    original_category: Optional[str] = None
+    original_detail: Optional[str] = None
+    original_merchant_name: Optional[str] = None
+    original_amount: Optional[float] = None
+    original_date: Optional[datetime] = None
+    hidden_from_spending: Optional[bool] = None
     created_at: datetime
 
 
