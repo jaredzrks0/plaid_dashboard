@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { useBalanceData } from '@/hooks/useBalanceData';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { NetWorthSummary } from './NetWorthSummary';
@@ -12,22 +13,34 @@ import { useTheme } from '@/contexts/ThemeContext';
 type Tab = 'networth' | 'account_cards' | 'historical_balances';
 
 export function BalancesPage() {
+  const router = useRouter();
   const { data, loading, error } = useBalanceData();
   const { theme } = useTheme();
   const [activeTab, setActiveTab] = useState<Tab>('networth');
   const [groupBy, setGroupBy] = useState<'account_type' | 'institution'>('account_type');
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [accountsDropdownOpen, setAccountsDropdownOpen] = useState(false);
+  const [transactionsDropdownOpen, setTransactionsDropdownOpen] = useState(false);
+  const accountsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const transactionsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const isAccountsTab = activeTab === 'account_cards' || activeTab === 'historical_balances';
 
-  const handleMouseEnter = () => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    setDropdownOpen(true);
+  const handleAccountsMouseEnter = () => {
+    if (accountsTimeoutRef.current) clearTimeout(accountsTimeoutRef.current);
+    setAccountsDropdownOpen(true);
   };
 
-  const handleMouseLeave = () => {
-    timeoutRef.current = setTimeout(() => setDropdownOpen(false), 150);
+  const handleAccountsMouseLeave = () => {
+    accountsTimeoutRef.current = setTimeout(() => setAccountsDropdownOpen(false), 150);
+  };
+
+  const handleTransactionsMouseEnter = () => {
+    if (transactionsTimeoutRef.current) clearTimeout(transactionsTimeoutRef.current);
+    setTransactionsDropdownOpen(true);
+  };
+
+  const handleTransactionsMouseLeave = () => {
+    transactionsTimeoutRef.current = setTimeout(() => setTransactionsDropdownOpen(false), 150);
   };
 
   if (loading) {
@@ -111,8 +124,8 @@ export function BalancesPage() {
             {/* Accounts dropdown tab */}
             <div
               className="relative"
-              onMouseEnter={handleMouseEnter}
-              onMouseLeave={handleMouseLeave}
+              onMouseEnter={handleAccountsMouseEnter}
+              onMouseLeave={handleAccountsMouseLeave}
             >
               <button
                 className={theme === 'dark'
@@ -130,7 +143,7 @@ export function BalancesPage() {
               >
                 Accounts
                 <svg
-                  className={`w-4 h-4 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`}
+                  className={`w-4 h-4 transition-transform ${accountsDropdownOpen ? 'rotate-180' : ''}`}
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -139,7 +152,7 @@ export function BalancesPage() {
                 </svg>
               </button>
 
-              {dropdownOpen && (
+              {accountsDropdownOpen && (
                 <div
                   className={theme === 'dark'
                     ? 'absolute top-full left-0 mt-1 w-52 rounded-lg bg-slate-800 border border-slate-700 shadow-xl z-50 py-1 overflow-hidden'
@@ -151,7 +164,7 @@ export function BalancesPage() {
                       key={tab}
                       onClick={() => {
                         setActiveTab(tab);
-                        setDropdownOpen(false);
+                        setAccountsDropdownOpen(false);
                       }}
                       className={theme === 'dark'
                         ? `w-full text-left px-4 py-2.5 text-sm font-medium transition-colors ${
@@ -169,6 +182,76 @@ export function BalancesPage() {
                       {label}
                     </button>
                   ))}
+                </div>
+              )}
+            </div>
+
+            {/* Transactions dropdown tab */}
+            <div
+              className="relative"
+              onMouseEnter={handleTransactionsMouseEnter}
+              onMouseLeave={handleTransactionsMouseLeave}
+            >
+              <button
+                className={theme === 'dark'
+                  ? `px-1 py-3 text-lg font-semibold transition-colors border-b-2 flex items-center gap-1.5 text-slate-400 border-b-transparent hover:text-slate-300`
+                  : `px-1 py-3 text-lg font-semibold transition-colors border-b-2 flex items-center gap-1.5 text-gray-600 border-b-transparent hover:text-gray-900`
+                }
+              >
+                Transactions
+                <svg
+                  className={`w-4 h-4 transition-transform ${transactionsDropdownOpen ? 'rotate-180' : ''}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+
+              {transactionsDropdownOpen && (
+                <div
+                  className={theme === 'dark'
+                    ? 'absolute top-full left-0 mt-1 w-52 rounded-lg bg-slate-800 border border-slate-700 shadow-xl z-50 py-1 overflow-hidden'
+                    : 'absolute top-full left-0 mt-1 w-52 rounded-lg bg-white border border-gray-200 shadow-xl z-50 py-1 overflow-hidden'
+                  }
+                >
+                  <button
+                    onClick={() => {
+                      router.push('/transactions?tab=recent');
+                      setTransactionsDropdownOpen(false);
+                    }}
+                    className={theme === 'dark'
+                      ? 'w-full text-left px-4 py-2.5 text-sm font-medium transition-colors text-slate-300 hover:bg-slate-700/60 hover:text-slate-100'
+                      : 'w-full text-left px-4 py-2.5 text-sm font-medium transition-colors text-gray-700 hover:bg-gray-50 hover:text-gray-900'
+                    }
+                  >
+                    Recent Transactions
+                  </button>
+                  <button
+                    onClick={() => {
+                      router.push('/transactions?tab=trends');
+                      setTransactionsDropdownOpen(false);
+                    }}
+                    className={theme === 'dark'
+                      ? 'w-full text-left px-4 py-2.5 text-sm font-medium transition-colors text-slate-300 hover:bg-slate-700/60 hover:text-slate-100'
+                      : 'w-full text-left px-4 py-2.5 text-sm font-medium transition-colors text-gray-700 hover:bg-gray-50 hover:text-gray-900'
+                    }
+                  >
+                    Spending Trends
+                  </button>
+                  <button
+                    onClick={() => {
+                      router.push('/transactions?tab=corrections');
+                      setTransactionsDropdownOpen(false);
+                    }}
+                    className={theme === 'dark'
+                      ? 'w-full text-left px-4 py-2.5 text-sm font-medium transition-colors text-slate-300 hover:bg-slate-700/60 hover:text-slate-100'
+                      : 'w-full text-left px-4 py-2.5 text-sm font-medium transition-colors text-gray-700 hover:bg-gray-50 hover:text-gray-900'
+                    }
+                  >
+                    Corrections
+                  </button>
                 </div>
               )}
             </div>

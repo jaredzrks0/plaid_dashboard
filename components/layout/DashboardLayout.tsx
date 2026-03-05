@@ -38,7 +38,6 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             )}
           </button>
         </header>
-        <NavigationBar />
         {children}
       </div>
     </div>

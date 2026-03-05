@@ -78,7 +78,8 @@ TRANSACTION_COLUMNS = [
     'iso_currency_code', 'transaction_pending', 'is_subscription',
     'subscription_interval', 'is_split', 'split_origin_id',
     'merchant_city', 'merchant_region',
-    'transaction_year', 'transaction_month', 'transaction_day'
+    'transaction_year', 'transaction_month', 'transaction_day',
+    'hidden_from_spending', 'is_corrected'
 ]
 
 # Define expected types for all transaction columns
@@ -192,14 +193,22 @@ def _load_transactions(
     select_cols = [c for c in TRANSACTION_COLUMNS if c in available_cols]
     df = pl.scan_parquet(TRANSACTIONS_PATH).select(select_cols).collect()
 
+    # Ensure hidden_from_spending column exists before applying corrections
+    if 'hidden_from_spending' not in df.columns:
+        df = df.with_columns(pl.lit(False).cast(pl.Boolean).alias('hidden_from_spending'))
+
     corrections = _read_corrections()
     df = _apply_corrections(df, corrections)
 
-    # Mark credit card payments as hidden from spending
+    # Mark credit card payments, transfers, and interest as hidden from spending
     df = df.with_columns(
         pl.when(
             (pl.col('detailed_financial_category').fill_null('').str.to_lowercase().str.contains('credit card'))
             | (pl.col('primary_financial_category').fill_null('').str.to_lowercase().str.contains('credit card'))
+            | (pl.col('detailed_financial_category').fill_null('').str.to_lowercase().str.contains('transfer'))
+            | (pl.col('primary_financial_category').fill_null('').str.to_lowercase().str.contains('transfer'))
+            | (pl.col('detailed_financial_category').fill_null('').str.to_lowercase().str.contains('interest'))
+            | (pl.col('primary_financial_category').fill_null('').str.to_lowercase().str.contains('interest'))
         )
         .then(True)
         .otherwise(pl.col('hidden_from_spending').fill_null(False))
@@ -452,11 +461,10 @@ def get_monthly_summary(
 ):
     df = _load_transactions(min_date, max_date, account_ids)
 
-    # Monthly by category (spending only = positive amounts, exclude transfers and hidden)
+    # Monthly by category (spending only = positive amounts, exclude hidden)
     spending = df.filter(
         (pl.col('transaction_amount') > 0)
         & (~pl.col('hidden_from_spending').fill_null(False))
-        & (~pl.col('primary_financial_category').fill_null('').str.to_lowercase().str.contains('transfer'))
     )
     monthly_cat = (
         spending
@@ -494,17 +502,25 @@ def get_monthly_summary(
     ]
 
     # Monthly totals (income vs spending, excluding hidden transactions)
+    # Spending: all positive amounts from non-hidden transactions
+    # Income: transactions with "income" in the category (case-insensitive)
     monthly_totals_df = (
         df
-        .filter(~pl.col('hidden_from_spending').fill_null(False))
         .with_columns(
             (pl.col('transaction_year').cast(pl.Utf8) + '-' +
              pl.col('transaction_month').cast(pl.Utf8).str.pad_start(2, '0')).alias('month')
         )
         .group_by('month')
         .agg([
-            pl.col('transaction_amount').filter(pl.col('transaction_amount') > 0).sum().alias('total_spending'),
-            pl.col('transaction_amount').filter(pl.col('transaction_amount') < 0).sum().abs().alias('total_income'),
+            pl.col('transaction_amount')
+              .filter((pl.col('transaction_amount') > 0) & (~pl.col('hidden_from_spending').fill_null(False)))
+              .sum()
+              .alias('total_spending'),
+            pl.col('transaction_amount').filter(
+                ((pl.col('primary_financial_category').fill_null('').str.to_lowercase().str.contains('income'))
+                | (pl.col('detailed_financial_category').fill_null('').str.to_lowercase().str.contains('income')))
+                & (~pl.col('hidden_from_spending').fill_null(False))
+            ).sum().abs().alias('total_income'),
         ])
         .sort('month')
     )
@@ -573,6 +589,26 @@ def create_correction(correction: CorrectionCreate):
         correction.hidden_from_spending is not None,
     ]):
         raise ValueError("No corrections provided")
+
+    # Delete any existing corrections for this transaction
+    cloud_reader = S3CloudHelper()
+    try:
+        existing_files = cloud_reader.list_files(
+            bucket='zirk-finance-tracker',
+            prefix=f'transaction/corrections/{correction.transaction_id}_'
+        )
+        for file_path in existing_files:
+            try:
+                key = file_path.split('zirk-finance-tracker/')[-1] if 'zirk-finance-tracker/' in file_path else file_path
+                cloud_reader.delete_from_s3(
+                    bucket='zirk-finance-tracker',
+                    key=key
+                )
+                print(f"Deleted previous correction: {key}")
+            except Exception as e:
+                print(f"Warning: Could not delete {file_path}: {e}")
+    except Exception as e:
+        print(f"Warning: Could not list previous corrections: {e}")
 
     # Determine correction_type
     if correction.hidden_from_spending is not None and not any([

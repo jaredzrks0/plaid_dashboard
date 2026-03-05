@@ -4,11 +4,12 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useSpendingTrends } from '@/hooks/useSpendingTrends';
 import { Card, CardHeader, CardContent } from '@/components/ui/Card';
+import { CorrectionModal } from './CorrectionModal';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, Sector,
 } from 'recharts';
-import { MonthlyCategorySpend } from '@/types/finance';
+import { MonthlyCategorySpend, CorrectionCreate, SplitCreate } from '@/types/finance';
 
 const CATEGORY_COLORS = [
   '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
@@ -29,9 +30,10 @@ interface PieDetailOverlayProps {
   theme: string;
   formatCurrency: (v: number) => string;
   loading?: boolean;
+  onEdit?: (transaction: any) => void;
 }
 
-function PieDetailOverlay({ category, items, onBack, theme, formatCurrency, loading }: PieDetailOverlayProps) {
+function PieDetailOverlay({ category, items, onBack, theme, formatCurrency, loading, onEdit }: PieDetailOverlayProps) {
   const totalSpent = items.reduce((sum, item) => sum + (item.transaction_amount || 0), 0);
 
   return (
@@ -84,9 +86,22 @@ function PieDetailOverlay({ category, items, onBack, theme, formatCurrency, load
                     {item.detailed_financial_category || item.primary_financial_category}
                   </p>
                 </div>
-                <span className={theme === 'dark' ? 'text-sm font-semibold text-slate-200' : 'text-sm font-semibold text-gray-900'}>
-                  {formatCurrency(item.transaction_amount)}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className={theme === 'dark' ? 'text-sm font-semibold text-slate-200' : 'text-sm font-semibold text-gray-900'}>
+                    {formatCurrency(item.transaction_amount)}
+                  </span>
+                  {onEdit && (
+                    <button
+                      onClick={() => onEdit(item)}
+                      className={theme === 'dark'
+                        ? 'text-xs font-medium text-blue-400 hover:text-blue-300'
+                        : 'text-xs font-medium text-blue-600 hover:text-blue-500'
+                      }
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
               </div>
               <p className={`text-xs ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>
                 {new Date(item.transaction_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}
@@ -102,13 +117,17 @@ function PieDetailOverlay({ category, items, onBack, theme, formatCurrency, load
 export function SpendingTrends() {
   const { theme } = useTheme();
   const now = new Date();
-  const [period, setPeriod] = useState<TrendsPeriod>('6m');
+  const [period, setPeriod] = useState<TrendsPeriod>('month');
   const [viewMonth, setViewMonth] = useState<Date>(new Date(now.getFullYear(), now.getMonth(), 1));
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [selectedPieSlice, setSelectedPieSlice] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState<number | undefined>(undefined);
   const [transactionsForCategory, setTransactionsForCategory] = useState<any[]>([]);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
+  const [incomeTransactions, setIncomeTransactions] = useState<any[]>([]);
+  const [editingTransaction, setEditingTransaction] = useState<any | null>(null);
+  const [merchantsSortCol, setMerchantsSortCol] = useState<'total' | 'count'>('count');
+  const [merchantsSortDesc, setMerchantsSortDesc] = useState(false);
 
   const prevMonth = useCallback(() => {
     setViewMonth(d => new Date(d.getFullYear(), d.getMonth() - 1, 1));
@@ -118,9 +137,40 @@ export function SpendingTrends() {
     setViewMonth(d => new Date(d.getFullYear(), d.getMonth() + 1, 1));
   }, []);
 
+  const handleCorrectionSubmit = async (correction: CorrectionCreate): Promise<boolean> => {
+    try {
+      const response = await fetch('http://localhost:8000/transactions/correction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(correction),
+      });
+      if (!response.ok) throw new Error('Failed to submit correction');
+      setEditingTransaction(null);
+      return true;
+    } catch (error) {
+      console.error('Error submitting correction:', error);
+      return false;
+    }
+  };
+
+  const handleSplitSubmit = async (split: SplitCreate): Promise<boolean> => {
+    try {
+      const response = await fetch('http://localhost:8000/transactions/split', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(split),
+      });
+      if (!response.ok) throw new Error('Failed to submit split');
+      setEditingTransaction(null);
+      return true;
+    } catch (error) {
+      console.error('Error submitting split:', error);
+      return false;
+    }
+  };
+
   const dateRange = useMemo(() => {
     const maxDate = now.toISOString().split('T')[0];
-    const min = new Date(now);
 
     if (period === 'month') {
       // Single month view
@@ -132,19 +182,43 @@ export function SpendingTrends() {
       };
     }
 
+    // For multi-month periods, start from the first day of the month N months ago (not including current month)
+    let monthsBack = 0;
     switch (period) {
-      case '3m': min.setMonth(min.getMonth() - 3); break;
-      case '6m': min.setMonth(min.getMonth() - 6); break;
-      case '1y': min.setFullYear(min.getFullYear() - 1); break;
-      case 'all': min.setFullYear(2020); break;
+      case '3m': monthsBack = 2; break;  // Current month + 2 previous = 3 total
+      case '6m': monthsBack = 5; break;  // Current month + 5 previous = 6 total
+      case '1y': monthsBack = 11; break; // Current month + 11 previous = 12 total
+      case 'all': monthsBack = 1000; break; // Far in the past
     }
-    return { minDate: min.toISOString().split('T')[0], maxDate };
+
+    const minDate = new Date(now.getFullYear(), now.getMonth() - monthsBack, 1);
+    return { minDate: minDate.toISOString().split('T')[0], maxDate };
   }, [period, viewMonth]);
 
   const { data, loading, error } = useSpendingTrends({
     minDate: dateRange.minDate,
     maxDate: dateRange.maxDate,
   });
+
+  // Fetch income transactions for the date range
+  useEffect(() => {
+    const params = new URLSearchParams();
+    params.set('min_date', dateRange.minDate);
+    params.set('max_date', dateRange.maxDate);
+    params.set('categories', 'Income');
+    params.set('limit', '1000');
+    params.set('sort_by', 'transaction_date');
+    params.set('sort_desc', 'true');
+
+    fetch(`http://localhost:8000/transactions/?${params.toString()}`)
+      .then(res => res.json())
+      .then(result => {
+        setIncomeTransactions(result.transactions || []);
+      })
+      .catch(err => {
+        console.error('Error fetching income transactions:', err);
+      });
+  }, [dateRange]);
 
   // Fetch transactions when a category is selected
   useEffect(() => {
@@ -172,7 +246,7 @@ export function SpendingTrends() {
   }, [selectedPieSlice, dateRange]);
 
   const formatCurrency = (val: number) =>
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(val);
+    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val);
 
   const formatMonth = (month: string) => {
     const [year, m] = month.split('-');
@@ -197,6 +271,14 @@ export function SpendingTrends() {
       total_spending: d.total_spending,
     }));
   }, [data]);
+
+  // Calculate max value for y-axis domain
+  const maxChartValue = useMemo(() => {
+    if (!incomeSpendingData.length) return 100;
+    const values = incomeSpendingData.flatMap(d => [d.total_income || 0, d.total_spending || 0]);
+    const max = Math.max(...values);
+    return max === 0 ? 100 : max * 1.1; // 10% padding, minimum 100
+  }, [incomeSpendingData]);
 
   // Pie chart: aggregate categories across the period
   const pieData = useMemo(() => {
@@ -234,11 +316,31 @@ export function SpendingTrends() {
       .map(([month, total]) => ({ merchant: formatMonth(month), total }));
   }, [selectedPieSlice, data, spendingCategoryData]);
 
-  // Top merchants (exclude transfers)
+  // Handle merchant column header clicks
+  const handleMerchantSort = useCallback((col: 'total' | 'count') => {
+    if (merchantsSortCol === col) {
+      // Same column clicked, reverse sort direction
+      setMerchantsSortDesc(!merchantsSortDesc);
+    } else {
+      // New column clicked, default to descending
+      setMerchantsSortCol(col);
+      setMerchantsSortDesc(true);
+    }
+  }, [merchantsSortCol, merchantsSortDesc]);
+
+  // Top merchants (sorted by selected column and direction)
   const topMerchants = useMemo(() => {
     if (!data) return [];
-    return data.top_merchants;
-  }, [data]);
+    const merchants = [...data.top_merchants];
+    const multiplier = merchantsSortDesc ? -1 : 1;
+
+    if (merchantsSortCol === 'count') {
+      merchants.sort((a, b) => (b.count - a.count) * multiplier);
+    } else {
+      merchants.sort((a, b) => (b.total - a.total) * multiplier);
+    }
+    return merchants;
+  }, [data, merchantsSortCol, merchantsSortDesc]);
 
   const btnClass = (active: boolean) => theme === 'dark'
     ? `px-3 py-1.5 text-sm font-medium rounded-md transition-all ${active ? 'bg-slate-700 text-slate-50' : 'text-slate-400 hover:text-slate-200'}`
@@ -291,14 +393,22 @@ export function SpendingTrends() {
   // Custom tooltip for better styling
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
+      const monthStr = payload[0].payload?.month || '';
+      // Filter income transactions for this month (exclude hidden from spending)
+      const monthTransactions = incomeTransactions.filter(txn => {
+        const txnDate = new Date(txn.transaction_date);
+        const txnMonth = formatMonth(`${txnDate.getFullYear()}-${String(txnDate.getMonth() + 1).padStart(2, '0')}`);
+        return txnMonth === monthStr && !txn.hidden_from_spending;
+      });
+
       return (
-        <div className={`rounded-lg px-4 py-3 ${
+        <div className={`rounded-lg px-4 py-3 max-w-sm ${
           theme === 'dark'
             ? 'bg-slate-900 text-slate-50 shadow-xl'
             : 'bg-white text-gray-900 shadow-xl'
         }`}>
           <p className={`text-sm font-semibold mb-2 ${theme === 'dark' ? 'text-slate-300' : 'text-gray-600'}`}>
-            {payload[0].payload?.month || 'Month'}
+            {monthStr}
           </p>
           {payload.map((entry: any, idx: number) => (
             <p key={idx} className={`text-sm font-medium ${
@@ -309,6 +419,22 @@ export function SpendingTrends() {
               {entry.name}: {formatCurrency(entry.value)}
             </p>
           ))}
+          {monthTransactions.length > 0 && (
+            <div className={`mt-2 pt-2 border-t ${theme === 'dark' ? 'border-slate-700' : 'border-gray-200'}`}>
+              <p className={`text-xs font-semibold mb-1 ${theme === 'dark' ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                Income Transactions:
+              </p>
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {monthTransactions.map((txn, idx) => (
+                  <div key={idx} className="text-xs">
+                    <p className={theme === 'dark' ? 'text-slate-300' : 'text-gray-700'}>
+                      {txn.merchant_name || 'Unknown'} - {formatCurrency(Math.abs(txn.transaction_amount))}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       );
     }
@@ -433,7 +559,14 @@ export function SpendingTrends() {
             <BarChart data={incomeSpendingData}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
               <XAxis dataKey="month" tick={{ fill: textColor, fontSize: 12 }} />
-              <YAxis tick={{ fill: textColor, fontSize: 12 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+              <YAxis
+                tick={{ fill: textColor, fontSize: 12 }}
+                tickFormatter={(v) => {
+                  if (v === 0) return '$0';
+                  if (v < 1000) return `$${v.toFixed(0)}`;
+                  return `$${(v / 1000).toFixed(1)}k`;
+                }}
+              />
               <Tooltip content={<CustomTooltip />} />
               <Legend />
               <Bar dataKey="total_income" name="Income" fill="#10b981" radius={[3, 3, 0, 0]} />
@@ -498,6 +631,7 @@ export function SpendingTrends() {
                   theme={theme}
                   formatCurrency={formatCurrency}
                   loading={loadingTransactions}
+                  onEdit={setEditingTransaction}
                 />
               </div>
             )}
@@ -529,14 +663,26 @@ export function SpendingTrends() {
                   ? 'px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase'
                   : 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase'
                 }>Merchant</th>
-                <th className={theme === 'dark'
-                  ? 'px-6 py-3 text-right text-xs font-medium text-slate-400 uppercase'
-                  : 'px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase'
-                }>Total Spent</th>
-                <th className={theme === 'dark'
-                  ? 'px-6 py-3 text-right text-xs font-medium text-slate-400 uppercase'
-                  : 'px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase'
-                }>Transactions</th>
+                <th
+                  onClick={() => handleMerchantSort('total')}
+                  className={`px-6 py-3 text-right text-xs font-medium uppercase cursor-pointer transition-colors ${
+                    theme === 'dark'
+                      ? 'text-slate-400 hover:text-slate-300'
+                      : 'text-gray-500 hover:text-gray-700'
+                  } ${merchantsSortCol === 'total' && (theme === 'dark' ? 'text-slate-200' : 'text-gray-900')}`}
+                >
+                  Total Spent {merchantsSortCol === 'total' && (merchantsSortDesc ? '▼' : '▲')}
+                </th>
+                <th
+                  onClick={() => handleMerchantSort('count')}
+                  className={`px-6 py-3 text-right text-xs font-medium uppercase cursor-pointer transition-colors ${
+                    theme === 'dark'
+                      ? 'text-slate-400 hover:text-slate-300'
+                      : 'text-gray-500 hover:text-gray-700'
+                  } ${merchantsSortCol === 'count' && (theme === 'dark' ? 'text-slate-200' : 'text-gray-900')}`}
+                >
+                  Transactions {merchantsSortCol === 'count' && (merchantsSortDesc ? '▼' : '▲')}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -569,6 +715,18 @@ export function SpendingTrends() {
           </table>
         </CardContent>
       </Card>
+
+      {/* Correction Modal for editing transactions */}
+      {editingTransaction && (
+        <CorrectionModal
+          transaction={editingTransaction}
+          categories={[]}
+          detailedCategories={[]}
+          onSubmitCorrection={handleCorrectionSubmit}
+          onSubmitSplit={handleSplitSubmit}
+          onClose={() => setEditingTransaction(null)}
+        />
+      )}
     </div>
   );
 }

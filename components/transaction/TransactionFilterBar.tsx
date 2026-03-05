@@ -44,6 +44,7 @@ export function TransactionFilterBar({
   const { theme } = useTheme();
   const [searchInput, setSearchInput] = useState(filters.search);
   const [expanded, setExpanded] = useState(false);
+  const [showMonthCalendar, setShowMonthCalendar] = useState(false);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -120,7 +121,7 @@ export function TransactionFilterBar({
       : 'bg-white rounded-xl border border-gray-200 p-4 mb-4 shadow-sm'
     }>
       {/* Search + period row */}
-      <div className="flex flex-wrap gap-4 items-end">
+      <div className="flex flex-wrap gap-4 items-center">
         <div className="flex-1 min-w-[200px]">
           <label className={labelClass}>Search</label>
           <input
@@ -146,54 +147,91 @@ export function TransactionFilterBar({
           </select>
         </div>
 
-        {/* Specific month picker */}
+        {/* Specific month picker with calendar */}
         {selectedPeriod === 'specific' && (
-          <div className="w-40">
+          <div className="relative w-48">
             <label className={labelClass}>Month</label>
-            <input
-              type="month"
-              value={specificMonthValue}
-              onChange={(e) => handleSpecificMonthChange(e.target.value)}
-              className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm ${inputClass}`}
-            />
+            <button
+              onClick={() => setShowMonthCalendar(!showMonthCalendar)}
+              className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm transition-colors ${inputClass}`}
+            >
+              {viewMonth.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+            </button>
+            {showMonthCalendar && (
+              <div className={`absolute top-full mt-1 left-0 p-3 rounded-lg shadow-lg z-20 w-56 ${
+                theme === 'dark' ? 'bg-slate-800 border border-slate-700' : 'bg-white border border-gray-200'
+              }`}>
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <button
+                    onClick={() => onViewMonthChange(new Date(viewMonth.getFullYear() - 1, viewMonth.getMonth(), 1))}
+                    className={`p-1.5 rounded ${theme === 'dark' ? 'hover:bg-slate-700' : 'hover:bg-gray-100'}`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+                  <span className={`text-xs font-semibold flex-1 text-center ${theme === 'dark' ? 'text-slate-300' : 'text-gray-700'}`}>
+                    {viewMonth.getFullYear()}
+                  </span>
+                  <button
+                    onClick={() => onViewMonthChange(new Date(viewMonth.getFullYear() + 1, viewMonth.getMonth(), 1))}
+                    className={`p-1.5 rounded ${theme === 'dark' ? 'hover:bg-slate-700' : 'hover:bg-gray-100'}`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="grid grid-cols-4 gap-1">
+                  {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((month, idx) => (
+                    <button
+                      key={month}
+                      onClick={() => {
+                        onViewMonthChange(new Date(viewMonth.getFullYear(), idx, 1));
+                        setShowMonthCalendar(false);
+                      }}
+                      className={`py-1.5 px-2 text-xs rounded font-medium transition-all ${
+                        idx === viewMonth.getMonth()
+                          ? theme === 'dark'
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-blue-500 text-white'
+                          : theme === 'dark'
+                            ? 'text-slate-400 hover:text-slate-200 hover:bg-slate-700'
+                            : 'text-gray-700 hover:bg-gray-100'
+                      }`}
+                    >
+                      {month}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Month navigation (single-month periods) */}
-        {isSingleMonth && (
-          <div className="flex items-end gap-2">
-            <button onClick={prevMonth} className={navBtnClass} title="Previous month">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-            <span className={`text-sm font-medium ${theme === 'dark' ? 'text-slate-300' : 'text-gray-700'} whitespace-nowrap`}>
-              {periodLabel}
-            </span>
-            <button onClick={nextMonth} className={navBtnClass} title="Next month">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          </div>
-        )}
-
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className={theme === 'dark'
-            ? 'px-4 py-2 text-sm font-medium rounded-lg bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors'
-            : 'px-4 py-2 text-sm font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors'
-          }
-        >
-          {expanded ? 'Less Filters' : 'More Filters'}
-        </button>
-        {hasActiveFilters && (
+        <div>
+          <div className={labelClass} style={{ visibility: 'hidden' }}>.</div>
           <button
-            onClick={clearFilters}
-            className="px-4 py-2 text-sm font-medium rounded-lg text-red-500 hover:text-red-400 transition-colors"
+            onClick={() => setExpanded(!expanded)}
+            className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+              theme === 'dark'
+                ? 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
           >
-            Clear All
+            {expanded ? 'Less Filters' : 'More Filters'}
           </button>
+        </div>
+        {hasActiveFilters && (
+          <div>
+            <div className={labelClass} style={{ visibility: 'hidden' }}>.</div>
+            <button
+              onClick={clearFilters}
+              className="px-4 py-2 text-sm font-medium rounded-lg text-red-500 hover:text-red-400 transition-colors"
+            >
+              Clear All
+            </button>
+          </div>
         )}
       </div>
 

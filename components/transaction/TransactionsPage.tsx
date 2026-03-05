@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useTransactionData } from '@/hooks/useTransactionData';
 import { useCorrections } from '@/hooks/useCorrections';
@@ -25,7 +26,16 @@ const defaultFilters: TransactionFilters = {
 
 export function TransactionsPage() {
   const { theme } = useTheme();
+  const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<Tab>('recent');
+
+  // Get tab from query parameter
+  useEffect(() => {
+    const tabParam = searchParams.get('tab') as Tab;
+    if (tabParam && ['recent', 'trends', 'corrections'].includes(tabParam)) {
+      setActiveTab(tabParam);
+    }
+  }, [searchParams]);
   const [filters, setFilters] = useState<TransactionFilters>(defaultFilters);
 
   const {
@@ -59,44 +69,9 @@ export function TransactionsPage() {
     return await toggleHiddenFromSpending(transaction, hidden);
   };
 
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'recent', label: 'Recent Transactions' },
-    { key: 'trends', label: 'Spending Trends' },
-    { key: 'corrections', label: 'Corrections' },
-  ];
-
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        {/* Sub-tab bar */}
-        <div className={theme === 'dark'
-          ? 'border-b border-slate-700/50'
-          : 'border-b border-gray-200'
-        }>
-          <div className="flex gap-8">
-            {tabs.map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => setActiveTab(key)}
-                className={theme === 'dark'
-                  ? `px-1 py-3 text-sm font-semibold transition-colors border-b-2 ${
-                      activeTab === key
-                        ? 'text-blue-400 border-b-blue-400'
-                        : 'text-slate-400 border-b-transparent hover:text-slate-300'
-                    }`
-                  : `px-1 py-3 text-sm font-semibold transition-colors border-b-2 ${
-                      activeTab === key
-                        ? 'text-blue-600 border-b-blue-600'
-                        : 'text-gray-600 border-b-transparent hover:text-gray-900'
-                    }`
-                }
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* Recent Transactions tab */}
         {activeTab === 'recent' && (
           <>
