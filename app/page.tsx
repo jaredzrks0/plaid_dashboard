@@ -1,7 +1,12 @@
+import { Suspense } from 'react';
 import { BalancesPage } from '@/components/balance/BalancesPage';
 
 export default function Home() {
-  return <BalancesPage />;
+  return (
+    <Suspense fallback={<div />}>
+      <BalancesPage />
+    </Suspense>
+  );
 }
 
 

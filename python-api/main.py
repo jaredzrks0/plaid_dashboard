@@ -142,10 +142,8 @@ def _read_corrections() -> pl.DataFrame:
             prefix='transaction/corrections/'
         )
         if not files:
-            print("No correction files found in S3")
             return fallback_df
 
-        print(f"Reading {len(files)} correction file(s) from S3")
 
         # Read each file separately and cast to consistent types
         # This avoids "String != Null" schema errors when combining files
@@ -154,32 +152,34 @@ def _read_corrections() -> pl.DataFrame:
             try:
                 df = pl.read_parquet(file_path)
 
-                # Cast all string columns to ensure consistency
+                # Cast columns to ensure consistency across files with different schemas
                 cast_cols = {}
                 for col in df.columns:
                     if col in ['corrected_category', 'corrected_detail', 'corrected_merchant_name',
-                              'original_category', 'original_detail', 'original_merchant_name']:
+                              'original_category', 'original_detail', 'original_merchant_name',
+                              'split_description', 'correction_id', 'transaction_id', 'correction_type']:
                         if df[col].dtype != pl.Utf8:
                             cast_cols[col] = pl.Utf8
+                    elif col == 'hidden_from_spending':
+                        if df[col].dtype != pl.Boolean:
+                            cast_cols[col] = pl.Boolean
+                    elif col == 'split_index':
+                        if df[col].dtype != pl.Int32:
+                            cast_cols[col] = pl.Int32
 
                 if cast_cols:
                     df = df.with_columns([pl.col(c).cast(t) for c, t in cast_cols.items()])
 
                 dfs.append(df)
-            except Exception as e:
-                print(f"Warning: Could not read file {file_path}: {e}")
+            except Exception:
+                pass
 
         if not dfs:
-            print("No corrections could be read")
             return fallback_df
 
         corrections_df = pl.concat(dfs)
-        print(f"✓ Successfully read {corrections_df.height} corrections from {len(dfs)} files")
         return corrections_df
-    except Exception as e:
-        print(f"Error reading corrections from S3: {e}")
-        import traceback
-        traceback.print_exc()
+    except Exception:
         return fallback_df
 
 
@@ -209,6 +209,7 @@ def _load_transactions(
             | (pl.col('primary_financial_category').fill_null('').str.to_lowercase().str.contains('transfer'))
             | (pl.col('detailed_financial_category').fill_null('').str.to_lowercase().str.contains('interest'))
             | (pl.col('primary_financial_category').fill_null('').str.to_lowercase().str.contains('interest'))
+            | (pl.col('transaction_pending').fill_null(False))
         )
         .then(True)
         .otherwise(pl.col('hidden_from_spending').fill_null(False))
@@ -218,7 +219,7 @@ def _load_transactions(
     if 'transaction_date' in df.columns:
         df = df.filter(
             (pl.col('transaction_date') >= min_date)
-            & (pl.col('transaction_date') <= max_date + timedelta(1))
+            & (pl.col('transaction_date') < max_date + timedelta(1))
         )
 
     if account_ids:
@@ -234,13 +235,7 @@ def _apply_corrections(df: pl.DataFrame, corrections: pl.DataFrame) -> pl.DataFr
         df = df.with_columns(pl.lit(None).cast(pl.Boolean).alias('hidden_from_spending'))
 
     if corrections.height == 0:
-        print("No corrections found")
         return df.with_columns(pl.lit(False).alias('is_corrected'))
-
-    print(f"Found {corrections.height} correction records")
-    print(f"Corrections columns: {corrections.columns}")
-    if corrections.height > 0:
-        print(f"Sample correction: {corrections.limit(1).to_dicts()}")
 
     # Ensure corrections has all expected columns (backward compat with old parquet files)
     for col_name, dtype in [
@@ -261,11 +256,9 @@ def _apply_corrections(df: pl.DataFrame, corrections: pl.DataFrame) -> pl.DataFr
     date_corrections = corrections.filter(pl.col('correction_type') == 'date')
     hide_corrections = corrections.filter(pl.col('correction_type') == 'hide')
 
-    print(f"Edits: {edits.height}, Splits: {splits.height}, Date: {date_corrections.height}, Hide: {hide_corrections.height}")
 
     # Apply simple edits via left join
     if edits.height > 0:
-        print(f"Applying {edits.height} edit corrections")
         edit_cols = edits.select([
             'transaction_id',
             'corrected_category',
@@ -275,14 +268,8 @@ def _apply_corrections(df: pl.DataFrame, corrections: pl.DataFrame) -> pl.DataFr
             'corrected_date',
         ]).unique(subset=['transaction_id'], keep='last')
 
-        print(f"Edit cols to apply: {edit_cols.to_dicts()}")
-        print(f"Sample transaction IDs from main df: {df.select('transaction_id').limit(3).to_series().to_list()}")
 
         df = df.join(edit_cols, on='transaction_id', how='left')
-
-        # Check how many rows were actually matched
-        matched = df.filter(pl.col('corrected_category').is_not_null()).height
-        print(f"Matched {matched} transactions with corrections")
 
         # Coalesce corrected fields over originals
         has_correction = (
@@ -604,11 +591,10 @@ def create_correction(correction: CorrectionCreate):
                     bucket='zirk-finance-tracker',
                     key=key
                 )
-                print(f"Deleted previous correction: {key}")
-            except Exception as e:
-                print(f"Warning: Could not delete {file_path}: {e}")
-    except Exception as e:
-        print(f"Warning: Could not list previous corrections: {e}")
+            except Exception:
+                pass
+    except Exception:
+        pass
 
     # Determine correction_type
     if correction.hidden_from_spending is not None and not any([
@@ -626,7 +612,6 @@ def create_correction(correction: CorrectionCreate):
     else:
         correction_type = 'edit'
 
-    print(f"Creating {correction_type} correction for transaction {correction.transaction_id}")
 
     record = pl.DataFrame({
         'correction_id': [correction_id],

@@ -95,9 +95,7 @@ export function TransactionTable({
   };
 
   const handleCorrectionSubmit = async (correction: CorrectionCreate) => {
-    console.log('Table submitting correction:', correction);
     const success = await onSubmitCorrection(correction);
-    console.log('Correction submission result:', success);
 
     if (success) {
       // Update local state with any changes from the correction
@@ -120,7 +118,6 @@ export function TransactionTable({
         if (correction.corrected_date !== undefined) newTxn.transaction_date = correction.corrected_date;
         if (correction.hidden_from_spending !== undefined) newTxn.hidden_from_spending = correction.hidden_from_spending;
 
-        console.log('Updated transaction locally:', newTxn);
         setLocalTransactions(prev =>
           prev.map(t => t.transaction_id === correction.transaction_id ? newTxn : t)
         );

@@ -30,7 +30,6 @@ export function useCorrections(): UseCorrectionsReturn {
       const data: CorrectionRecord[] = await response.json();
       setCorrections(data);
     } catch (err) {
-      console.error('Error fetching corrections:', err);
       setError(err instanceof Error ? err.message : 'Failed to load corrections');
     } finally {
       setLoading(false);
@@ -43,14 +42,12 @@ export function useCorrections(): UseCorrectionsReturn {
 
   const submitCorrection = useCallback(async (correction: CorrectionCreate): Promise<boolean> => {
     try {
-      console.log('Submitting correction:', correction);
       const response = await fetch(`${API_BASE_URL}/transactions/corrections`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(correction),
       });
       const responseData = await response.json();
-      console.log('Correction response:', { status: response.status, data: responseData });
 
       if (!response.ok) {
         throw new Error(`API Error: ${response.status} ${response.statusText}`);
@@ -58,7 +55,6 @@ export function useCorrections(): UseCorrectionsReturn {
       await fetchCorrections();
       return true;
     } catch (err) {
-      console.error('Error submitting correction:', err);
       setError(err instanceof Error ? err.message : 'Failed to submit correction');
       return false;
     }
@@ -77,7 +73,6 @@ export function useCorrections(): UseCorrectionsReturn {
       await fetchCorrections();
       return true;
     } catch (err) {
-      console.error('Error submitting split:', err);
       setError(err instanceof Error ? err.message : 'Failed to submit split');
       return false;
     }
@@ -106,7 +101,6 @@ export function useCorrections(): UseCorrectionsReturn {
       await fetchCorrections();
       return true;
     } catch (err) {
-      console.error('Error deleting correction:', err);
       setError(err instanceof Error ? err.message : 'Failed to delete correction');
       return false;
     }

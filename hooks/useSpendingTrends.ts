@@ -42,7 +42,6 @@ export function useSpendingTrends({ minDate, maxDate, accountIds }: UseSpendingT
       const result: TransactionSummary = await response.json();
       setData(result);
     } catch (err) {
-      console.error('Error fetching spending trends:', err);
       setError(err instanceof Error ? err.message : 'Failed to load spending trends');
     } finally {
       setLoading(false);

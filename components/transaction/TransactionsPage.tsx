@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useTransactionData } from '@/hooks/useTransactionData';
@@ -24,7 +24,7 @@ const defaultFilters: TransactionFilters = {
   sortDesc: true,
 };
 
-export function TransactionsPage() {
+function TransactionsPageContent() {
   const { theme } = useTheme();
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<Tab>('recent');
@@ -70,65 +70,73 @@ export function TransactionsPage() {
   };
 
   return (
-    <DashboardLayout>
-      <div className="space-y-6">
-        {/* Recent Transactions tab */}
-        {activeTab === 'recent' && (
-          <>
-            <TransactionFilterBar
+    <div className="space-y-6">
+      {/* Recent Transactions tab */}
+      {activeTab === 'recent' && (
+        <>
+          <TransactionFilterBar
+            filters={filters}
+            onFiltersChange={handleFiltersChange}
+            availableCategories={data?.categories || []}
+            availableAccounts={data?.accounts || []}
+            selectedPeriod={selectedPeriod}
+            onPeriodChange={setSelectedPeriod}
+            viewMonth={viewMonth}
+            onViewMonthChange={setViewMonth}
+            prevMonth={prevMonth}
+            nextMonth={nextMonth}
+            isSingleMonth={isSingleMonth}
+            periodLabel={periodLabel}
+          />
+
+          {loading ? (
+            <div className="space-y-3">
+              {[...Array(8)].map((_, i) => (
+                <div key={i} className="animate-pulse">
+                  <div className={theme === 'dark' ? 'h-12 bg-slate-800/50 rounded-lg' : 'h-12 bg-gray-200 rounded-lg'} />
+                </div>
+              ))}
+            </div>
+          ) : error ? (
+            <Card>
+              <CardContent className="p-6 text-center">
+                <div className={theme === 'dark' ? 'text-red-400' : 'text-red-600'}>
+                  <h3 className="text-lg font-semibold mb-2">Error Loading Transactions</h3>
+                  <p>{error}</p>
+                </div>
+              </CardContent>
+            </Card>
+          ) : data ? (
+            <TransactionTable
+              transactions={data.transactions}
+              totalCount={data.total_count}
+              categories={data.categories}
               filters={filters}
               onFiltersChange={handleFiltersChange}
-              availableCategories={data?.categories || []}
-              availableAccounts={data?.accounts || []}
-              selectedPeriod={selectedPeriod}
-              onPeriodChange={setSelectedPeriod}
-              viewMonth={viewMonth}
-              onViewMonthChange={setViewMonth}
-              prevMonth={prevMonth}
-              nextMonth={nextMonth}
-              isSingleMonth={isSingleMonth}
-              periodLabel={periodLabel}
+              onSubmitCorrection={handleCorrectionSubmit}
+              onSubmitSplit={handleSplitSubmit}
+              onToggleHidden={handleToggleHidden}
+              onTransactionUpdated={() => {}}
             />
+          ) : null}
+        </>
+      )}
 
-            {loading ? (
-              <div className="space-y-3">
-                {[...Array(8)].map((_, i) => (
-                  <div key={i} className="animate-pulse">
-                    <div className={theme === 'dark' ? 'h-12 bg-slate-800/50 rounded-lg' : 'h-12 bg-gray-200 rounded-lg'} />
-                  </div>
-                ))}
-              </div>
-            ) : error ? (
-              <Card>
-                <CardContent className="p-6 text-center">
-                  <div className={theme === 'dark' ? 'text-red-400' : 'text-red-600'}>
-                    <h3 className="text-lg font-semibold mb-2">Error Loading Transactions</h3>
-                    <p>{error}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            ) : data ? (
-              <TransactionTable
-                transactions={data.transactions}
-                totalCount={data.total_count}
-                categories={data.categories}
-                filters={filters}
-                onFiltersChange={handleFiltersChange}
-                onSubmitCorrection={handleCorrectionSubmit}
-                onSubmitSplit={handleSplitSubmit}
-                onToggleHidden={handleToggleHidden}
-                onTransactionUpdated={() => {}}
-              />
-            ) : null}
-          </>
-        )}
+      {/* Spending Trends tab */}
+      {activeTab === 'trends' && <SpendingTrends />}
 
-        {/* Spending Trends tab */}
-        {activeTab === 'trends' && <SpendingTrends />}
+      {/* Corrections tab */}
+      {activeTab === 'corrections' && <CorrectionsView onCorrectionDeleted={refetch} />}
+    </div>
+  );
+}
 
-        {/* Corrections tab */}
-        {activeTab === 'corrections' && <CorrectionsView onCorrectionDeleted={refetch} />}
-      </div>
+export function TransactionsPage() {
+  return (
+    <DashboardLayout>
+      <Suspense fallback={<div className="text-center py-8">Loading...</div>}>
+        <TransactionsPageContent />
+      </Suspense>
     </DashboardLayout>
   );
 }

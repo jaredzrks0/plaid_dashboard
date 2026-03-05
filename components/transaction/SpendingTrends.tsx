@@ -148,7 +148,6 @@ export function SpendingTrends() {
       setEditingTransaction(null);
       return true;
     } catch (error) {
-      console.error('Error submitting correction:', error);
       return false;
     }
   };
@@ -164,7 +163,6 @@ export function SpendingTrends() {
       setEditingTransaction(null);
       return true;
     } catch (error) {
-      console.error('Error submitting split:', error);
       return false;
     }
   };
@@ -216,7 +214,6 @@ export function SpendingTrends() {
         setIncomeTransactions(result.transactions || []);
       })
       .catch(err => {
-        console.error('Error fetching income transactions:', err);
       });
   }, [dateRange]);
 
@@ -239,7 +236,6 @@ export function SpendingTrends() {
           setLoadingTransactions(false);
         })
         .catch(err => {
-          console.error('Error fetching transactions:', err);
           setLoadingTransactions(false);
         });
     }

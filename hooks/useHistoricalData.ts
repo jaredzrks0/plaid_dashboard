@@ -104,7 +104,6 @@ export function useHistoricalData({ timePeriod, customRange, selectedAccounts }:
       setData(points);
       setAccountNames(Array.from(allNames).sort());
     } catch (err) {
-      console.error('Error fetching historical data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load historical data');
     } finally {
       setLoading(false);

@@ -130,7 +130,6 @@ export function useTransactionData({ filters }: UseTransactionDataParams): UseTr
       const result: TransactionsResponse = await response.json();
       setData(result);
     } catch (err) {
-      console.error('Error fetching transactions:', err);
       setError(err instanceof Error ? err.message : 'Failed to load transactions');
     } finally {
       setLoading(false);

@@ -69,7 +69,6 @@ export function useBalanceData() {
           liabilitiesByType
         });
       } catch (err) {
-        console.error('Error fetching balance data:', err);
         setError(err instanceof Error ? err.message : 'Failed to load balance data');
       } finally {
         setLoading(false);
@@ -135,7 +134,6 @@ export function useBalanceData() {
         liabilitiesByType
       });
     } catch (err) {
-      console.error('Error fetching balance data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load balance data');
     } finally {
       setLoading(false);

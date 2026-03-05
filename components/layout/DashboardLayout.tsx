@@ -1,15 +1,17 @@
 'use client';
 
 import { useTheme } from '@/contexts/ThemeContext';
-import { NavigationBar } from './NavigationBar';
+import { MainNav } from './MainNav';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
+  navActiveTab?: 'networth' | 'account_cards' | 'historical_balances';
+  onNavTabChange?: (tab: 'networth' | 'account_cards' | 'historical_balances') => void;
 }
 
-export function DashboardLayout({ children }: DashboardLayoutProps) {
+export function DashboardLayout({ children, navActiveTab, onNavTabChange }: DashboardLayoutProps) {
   const { theme, toggleTheme } = useTheme();
-  
+
   return (
     <div className={theme === 'dark' ? 'min-h-screen bg-slate-900' : 'min-h-screen bg-gray-50'}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -38,7 +40,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             )}
           </button>
         </header>
-        {children}
+        <MainNav activeTab={navActiveTab} onTabChange={onNavTabChange} />
+        <div className="py-6">
+          {children}
+        </div>
       </div>
     </div>
   );
