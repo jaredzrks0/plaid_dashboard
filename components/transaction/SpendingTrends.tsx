@@ -181,7 +181,7 @@ export function SpendingTrends() {
   };
 
 
-  // Filter out transfers for spending data
+  // Filter out transfers for spending data (hidden_from_spending already filtered by backend)
   const spendingCategoryData = useMemo((): MonthlyCategorySpend[] => {
     if (!data) return [];
     return data.monthly_by_category.filter(d => !isTransfer(d.category));
