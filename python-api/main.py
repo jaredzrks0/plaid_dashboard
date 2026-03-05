@@ -441,11 +441,13 @@ def get_monthly_summary(
 ):
     df = _load_transactions(min_date, max_date, account_ids)
 
-    # Monthly by category (spending only = positive amounts, exclude transfers and hidden)
+    # Monthly by category (spending only = positive amounts, exclude transfers, credit card payments, and hidden)
     spending = df.filter(
         (pl.col('transaction_amount') > 0)
         & (~pl.col('hidden_from_spending').fill_null(False))
         & (~pl.col('primary_financial_category').fill_null('').str.to_lowercase().str.contains('transfer'))
+        & (~pl.col('detailed_financial_category').fill_null('').str.to_lowercase().str.contains('credit card'))
+        & (~pl.col('primary_financial_category').fill_null('').str.to_lowercase().str.contains('credit card'))
     )
     monthly_cat = (
         spending
@@ -482,9 +484,14 @@ def get_monthly_summary(
         for r in top_merch.to_dicts()
     ]
 
-    # Monthly totals (income vs spending)
+    # Monthly totals (income vs spending, excluding credit card payments and hidden transactions)
     monthly_totals_df = (
         df
+        .filter(
+            ~pl.col('hidden_from_spending').fill_null(False)
+            & (~pl.col('detailed_financial_category').fill_null('').str.to_lowercase().str.contains('credit card'))
+            & (~pl.col('primary_financial_category').fill_null('').str.to_lowercase().str.contains('credit card'))
+        )
         .with_columns(
             (pl.col('transaction_year').cast(pl.Utf8) + '-' +
              pl.col('transaction_month').cast(pl.Utf8).str.pad_start(2, '0')).alias('month')

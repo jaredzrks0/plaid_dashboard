@@ -187,34 +187,23 @@ export function SpendingTrends() {
     return data.monthly_by_category.filter(d => !isTransfer(d.category));
   }, [data]);
 
-  // Income vs Spending bar chart data (excluding credit card payments from spending)
+  // Income vs Spending bar chart data
   const incomeSpendingData = useMemo(() => {
-    if (!data || !spendingCategoryData.length) return [];
-
-    // Calculate spending excluding credit card payments
-    const spendingByMonth = new Map<string, number>();
-    spendingCategoryData.forEach(d => {
-      if (d.category !== 'Credit Card Payment') {
-        spendingByMonth.set(d.month, (spendingByMonth.get(d.month) || 0) + d.total);
-      }
-    });
+    if (!data) return [];
 
     return data.monthly_totals.map(d => ({
       month: formatMonth(d.month),
       total_income: d.total_income,
-      total_spending: spendingByMonth.get(d.month) || 0,
+      total_spending: d.total_spending,
     }));
-  }, [data, spendingCategoryData]);
+  }, [data]);
 
-  // Pie chart: aggregate categories across the period (excluding credit card payments)
+  // Pie chart: aggregate categories across the period
   const pieData = useMemo(() => {
     if (!spendingCategoryData.length) return [];
     const totals = new Map<string, number>();
     spendingCategoryData.forEach(d => {
-      // Exclude credit card payments from pie chart
-      if (d.category !== 'Credit Card Payment') {
-        totals.set(d.category, (totals.get(d.category) || 0) + d.total);
-      }
+      totals.set(d.category, (totals.get(d.category) || 0) + d.total);
     });
     return [...totals.entries()]
       .sort((a, b) => b[1] - a[1])
