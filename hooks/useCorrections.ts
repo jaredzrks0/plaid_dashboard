@@ -47,18 +47,15 @@ export function useCorrections(): UseCorrectionsReturn {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(correction),
       });
-      const responseData = await response.json();
-
       if (!response.ok) {
         throw new Error(`API Error: ${response.status} ${response.statusText}`);
       }
-      await fetchCorrections();
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to submit correction');
       return false;
     }
-  }, [fetchCorrections]);
+  }, []);
 
   const submitSplit = useCallback(async (split: SplitCreate): Promise<boolean> => {
     try {

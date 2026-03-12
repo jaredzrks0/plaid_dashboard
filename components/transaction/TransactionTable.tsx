@@ -9,7 +9,6 @@ import { CorrectionModal } from './CorrectionModal';
 interface TransactionTableProps {
   transactions: Transaction[];
   totalCount: number;
-  categories: string[];
   filters: TransactionFilters;
   onFiltersChange: (filters: TransactionFilters) => void;
   onSubmitCorrection: (correction: CorrectionCreate) => Promise<boolean>;
@@ -21,7 +20,6 @@ interface TransactionTableProps {
 export function TransactionTable({
   transactions,
   totalCount,
-  categories,
   filters,
   onFiltersChange,
   onSubmitCorrection,
@@ -37,14 +35,6 @@ export function TransactionTable({
   useEffect(() => {
     setLocalTransactions(transactions);
   }, [transactions]);
-
-  // Extract unique detailed categories from transactions
-  const detailedCategories = Array.from(
-    new Set(localTransactions
-      .map(t => t.detailed_financial_category)
-      .filter((d): d is string => d !== null && d !== undefined)
-    )
-  ).sort();
 
   const formatCurrency = (val: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
@@ -162,7 +152,7 @@ export function TransactionTable({
                 </th>
                 <th className={thClass}>Description</th>
                 <th className={thClass}>Category</th>
-                <th className={thClass}>Detail</th>
+                <th className={thClass}>Sub-category</th>
                 <th className={thClass} onClick={() => handleSort('transaction_amount')}>
                   Amount <SortIcon column="transaction_amount" />
                 </th>
@@ -293,8 +283,6 @@ export function TransactionTable({
       {editingTransaction && (
         <CorrectionModal
           transaction={editingTransaction}
-          categories={categories}
-          detailedCategories={detailedCategories}
           onSubmitCorrection={handleCorrectionSubmit}
           onSubmitSplit={onSubmitSplit}
           onClose={() => setEditingTransaction(null)}

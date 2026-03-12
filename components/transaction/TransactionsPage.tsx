@@ -12,6 +12,7 @@ import { TransactionTable } from './TransactionTable';
 import { SpendingTrends } from './SpendingTrends';
 import { CorrectionsView } from './CorrectionsView';
 import { TransactionFilters } from '@/types/finance';
+import { CATEGORY_KEYS } from '@/lib/categories';
 
 type Tab = 'recent' | 'trends' | 'corrections';
 
@@ -53,9 +54,8 @@ function TransactionsPageContent() {
   };
 
   const handleCorrectionSubmit = async (correction: Parameters<typeof submitCorrection>[0]) => {
-    const success = await submitCorrection(correction);
-    if (success) refetch();
-    return success;
+    // No refetch — TransactionTable handles optimistic local updates
+    return submitCorrection(correction);
   };
 
   const handleSplitSubmit = async (split: Parameters<typeof submitSplit>[0]) => {
@@ -77,7 +77,7 @@ function TransactionsPageContent() {
           <TransactionFilterBar
             filters={filters}
             onFiltersChange={handleFiltersChange}
-            availableCategories={data?.categories || []}
+            availableCategories={CATEGORY_KEYS}
             availableAccounts={data?.accounts || []}
             selectedPeriod={selectedPeriod}
             onPeriodChange={setSelectedPeriod}
@@ -110,7 +110,6 @@ function TransactionsPageContent() {
             <TransactionTable
               transactions={data.transactions}
               totalCount={data.total_count}
-              categories={data.categories}
               filters={filters}
               onFiltersChange={handleFiltersChange}
               onSubmitCorrection={handleCorrectionSubmit}

@@ -3,11 +3,10 @@
 import { useState } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Transaction, CorrectionCreate, SplitCreate, SplitItem } from '@/types/finance';
+import { FINANCIAL_CATEGORIES_SCHEMA, CATEGORY_KEYS } from '@/lib/categories';
 
 interface CorrectionModalProps {
   transaction: Transaction;
-  categories: string[];
-  detailedCategories?: string[];
   onSubmitCorrection: (correction: CorrectionCreate) => Promise<boolean>;
   onSubmitSplit: (split: SplitCreate) => Promise<boolean>;
   onClose: () => void;
@@ -20,8 +19,6 @@ function toDateInputValue(dateStr: string | null): string {
 
 export function CorrectionModal({
   transaction,
-  categories,
-  detailedCategories = [],
   onSubmitCorrection,
   onSubmitSplit,
   onClose,
@@ -33,6 +30,14 @@ export function CorrectionModal({
   // Edit mode state
   const [editCategory, setEditCategory] = useState(transaction.primary_financial_category || '');
   const [editDetail, setEditDetail] = useState(transaction.detailed_financial_category || '');
+
+  const availableSubcategories = editCategory ? (FINANCIAL_CATEGORIES_SCHEMA[editCategory] ?? []) : [];
+
+  const handleCategoryChange = (cat: string) => {
+    setEditCategory(cat);
+    const subs = FINANCIAL_CATEGORIES_SCHEMA[cat] ?? [];
+    if (!subs.includes(editDetail)) setEditDetail('');
+  };
   const [editMerchant, setEditMerchant] = useState(transaction.merchant_name || '');
   const [editAmount, setEditAmount] = useState(String(transaction.transaction_amount));
   const [editDate, setEditDate] = useState(toDateInputValue(transaction.transaction_date));
@@ -207,24 +212,25 @@ export function CorrectionModal({
                 <label className={labelClass}>Category</label>
                 <select
                   value={editCategory}
-                  onChange={(e) => setEditCategory(e.target.value)}
+                  onChange={(e) => handleCategoryChange(e.target.value)}
                   className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm ${inputClass}`}
                 >
                   <option value="">Select category</option>
-                  {categories.map(cat => (
+                  {CATEGORY_KEYS.map(cat => (
                     <option key={cat} value={cat}>{cat}</option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className={labelClass}>Detail</label>
+                <label className={labelClass}>Sub-category</label>
                 <select
                   value={editDetail}
                   onChange={(e) => setEditDetail(e.target.value)}
-                  className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm ${inputClass}`}
+                  disabled={availableSubcategories.length === 0}
+                  className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm ${inputClass} disabled:opacity-50`}
                 >
                   <option value="">Select detail (optional)</option>
-                  {detailedCategories.map(detail => (
+                  {availableSubcategories.map(detail => (
                     <option key={detail} value={detail}>{detail}</option>
                   ))}
                 </select>
@@ -295,7 +301,7 @@ export function CorrectionModal({
                       className={`mt-1 w-full px-3 py-2 rounded-lg border text-sm ${inputClass}`}
                     >
                       <option value="">Select</option>
-                      {categories.map(cat => (
+                      {CATEGORY_KEYS.map(cat => (
                         <option key={cat} value={cat}>{cat}</option>
                       ))}
                     </select>

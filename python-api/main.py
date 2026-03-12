@@ -1,4 +1,6 @@
 import polars as pl
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import FastAPI, Query
 from datetime import datetime
@@ -17,6 +19,15 @@ import uuid
 
 app = FastAPI(debug=True)
 cloud_reader = S3CloudHelper()
+
+# In-memory cache
+_transactions_cache: dict = {'df': None, 'ts': 0.0}
+_corrections_cache: dict = {'df': None, 'valid': False}
+TRANSACTIONS_CACHE_TTL = 300  # 5 minutes — refresh if Plaid data is pulled
+
+
+def _invalidate_corrections_cache():
+    _corrections_cache['valid'] = False
 
 # Configure CORS
 app.add_middleware(
@@ -112,8 +123,10 @@ TRANSACTION_SCHEMA = {
 }
 
 
-def _read_corrections() -> pl.DataFrame:
+def _read_corrections(use_cache: bool = True) -> pl.DataFrame:
     """Read all correction records from S3. Returns empty DataFrame if none exist."""
+    if use_cache and _corrections_cache['valid'] and _corrections_cache['df'] is not None:
+        return _corrections_cache['df']
     expected_schema = {
         'correction_id': pl.Utf8,
         'transaction_id': pl.Utf8,
@@ -145,14 +158,9 @@ def _read_corrections() -> pl.DataFrame:
             return fallback_df
 
 
-        # Read each file separately and cast to consistent types
-        # This avoids "String != Null" schema errors when combining files
-        dfs = []
-        for file_path in files:
+        def _read_one(file_path: str) -> pl.DataFrame | None:
             try:
                 df = pl.read_parquet(file_path)
-
-                # Cast columns to ensure consistency across files with different schemas
                 cast_cols = {}
                 for col in df.columns:
                     if col in ['corrected_category', 'corrected_detail', 'corrected_merchant_name',
@@ -166,21 +174,46 @@ def _read_corrections() -> pl.DataFrame:
                     elif col == 'split_index':
                         if df[col].dtype != pl.Int32:
                             cast_cols[col] = pl.Int32
-
                 if cast_cols:
                     df = df.with_columns([pl.col(c).cast(t) for c, t in cast_cols.items()])
-
-                dfs.append(df)
+                return df
             except Exception:
-                pass
+                return None
+
+        # Read all correction files in parallel
+        dfs = []
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            futures = {executor.submit(_read_one, fp): fp for fp in files}
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    dfs.append(result)
 
         if not dfs:
             return fallback_df
 
         corrections_df = pl.concat(dfs)
+        _corrections_cache['df'] = corrections_df
+        _corrections_cache['valid'] = True
         return corrections_df
     except Exception:
         return fallback_df
+
+
+def _get_raw_transactions() -> pl.DataFrame:
+    """Load full transaction dataset from S3, with in-memory caching."""
+    now = time.time()
+    if _transactions_cache['df'] is not None and (now - _transactions_cache['ts']) < TRANSACTIONS_CACHE_TTL:
+        return _transactions_cache['df']
+
+    scan = pl.scan_parquet(TRANSACTIONS_PATH)
+    available_cols = scan.collect_schema().names()
+    select_cols = [c for c in TRANSACTION_COLUMNS if c in available_cols]
+    df = scan.select(select_cols).collect()
+
+    _transactions_cache['df'] = df
+    _transactions_cache['ts'] = now
+    return df
 
 
 def _load_transactions(
@@ -189,9 +222,7 @@ def _load_transactions(
     account_ids: List[str] | None = None,
 ) -> pl.DataFrame:
     """Load and filter transactions with corrections applied."""
-    available_cols = pl.scan_parquet(TRANSACTIONS_PATH).collect_schema().names()
-    select_cols = [c for c in TRANSACTION_COLUMNS if c in available_cols]
-    df = pl.scan_parquet(TRANSACTIONS_PATH).select(select_cols).collect()
+    df = _get_raw_transactions()
 
     # Ensure hidden_from_spending column exists before applying corrections
     if 'hidden_from_spending' not in df.columns:
@@ -547,10 +578,12 @@ def get_corrections():
             transaction_id=r['transaction_id'],
             correction_type=r['correction_type'],
             corrected_category=r.get('corrected_category'),
+            corrected_detail=r.get('corrected_detail'),
             corrected_merchant_name=r.get('corrected_merchant_name'),
             corrected_amount=r.get('corrected_amount'),
             corrected_date=r.get('corrected_date'),
             original_category=r.get('original_category'),
+            original_detail=r.get('original_detail'),
             original_merchant_name=r.get('original_merchant_name'),
             original_amount=r.get('original_amount'),
             original_date=r.get('original_date'),
@@ -645,6 +678,7 @@ def create_correction(correction: CorrectionCreate):
         file_name=f'transaction/corrections/{correction.transaction_id}_{correction_id}.parquet',
         file_type='parquet'
     )
+    _invalidate_corrections_cache()
 
     return CorrectionRecord(
         correction_id=correction_id,
@@ -695,6 +729,7 @@ def create_split(split: SplitCreate):
         file_name=f'transaction/corrections/{split.transaction_id}_{correction_id}_split.parquet',
         file_type='parquet'
     )
+    _invalidate_corrections_cache()
 
     return [
         CorrectionRecord(
@@ -729,6 +764,7 @@ def delete_correction(correction_id: str):
                 bucket_name='zirk-finance-tracker',
                 file_name=file_key,
             )
+            _invalidate_corrections_cache()
             return {"message": "Correction deleted"}
 
     return {"message": "Correction not found"}

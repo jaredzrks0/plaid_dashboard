@@ -1,9 +1,12 @@
 'use client';
 
+import { useState } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useCorrections } from '@/hooks/useCorrections';
 import { Card, CardHeader, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
+
+const PAGE_SIZE = 50;
 
 interface CorrectionsViewProps {
   onCorrectionDeleted: () => void;
@@ -12,10 +15,14 @@ interface CorrectionsViewProps {
 export function CorrectionsView({ onCorrectionDeleted }: CorrectionsViewProps) {
   const { theme } = useTheme();
   const { corrections, loading, error, deleteCorrection } = useCorrections();
+  const [page, setPage] = useState(0);
 
   const handleDelete = async (correctionId: string) => {
     const success = await deleteCorrection(correctionId);
-    if (success) onCorrectionDeleted();
+    if (success) {
+      onCorrectionDeleted();
+      setPage(0);
+    }
   };
 
   const formatCurrency = (val: number) =>
@@ -74,6 +81,10 @@ export function CorrectionsView({ onCorrectionDeleted }: CorrectionsViewProps) {
     );
   }
 
+  const groupedEntries = [...grouped.entries()];
+  const totalPages = Math.ceil(groupedEntries.length / PAGE_SIZE);
+  const pageEntries = groupedEntries.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
   const rowClass = theme === 'dark' ? 'text-sm text-slate-300' : 'text-sm text-gray-700';
   const arrowClass = theme === 'dark' ? 'text-slate-500 mx-1' : 'text-gray-400 mx-1';
   const fromClass = theme === 'dark' ? 'text-slate-500 line-through' : 'text-gray-400 line-through';
@@ -85,9 +96,34 @@ export function CorrectionsView({ onCorrectionDeleted }: CorrectionsViewProps) {
         <p className={theme === 'dark' ? 'text-sm text-slate-400' : 'text-sm text-gray-600'}>
           {grouped.size} correction{grouped.size !== 1 ? 's' : ''} applied
         </p>
+        {totalPages > 1 && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage(p => Math.max(0, p - 1))}
+              disabled={page === 0}
+              className={`px-3 py-1 text-sm rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                theme === 'dark' ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              ←
+            </button>
+            <span className={theme === 'dark' ? 'text-sm text-slate-400' : 'text-sm text-gray-600'}>
+              {page + 1} / {totalPages}
+            </span>
+            <button
+              onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+              disabled={page === totalPages - 1}
+              className={`px-3 py-1 text-sm rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                theme === 'dark' ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              →
+            </button>
+          </div>
+        )}
       </div>
 
-      {[...grouped.entries()].map(([correctionId, items]) => {
+      {pageEntries.map(([correctionId, items]) => {
         const first = items[0];
         const isSplit = first.correction_type === 'split';
         const isHide = first.correction_type === 'hide';
@@ -131,61 +167,51 @@ export function CorrectionsView({ onCorrectionDeleted }: CorrectionsViewProps) {
                     </div>
                   ) : (
                     <div className="mt-2 space-y-1">
-                      {(first.corrected_category || first.original_category) && (
+                      {first.corrected_category != null && (
                         <div className="flex items-center gap-1">
                           <span className={rowClass}>Category:</span>
-                          {first.original_category && (
-                            <span className={fromClass}>{first.original_category}</span>
-                          )}
-                          {first.original_category && first.corrected_category && (
-                            <span className={arrowClass}>→</span>
-                          )}
-                          {first.corrected_category && (
-                            <span className={toClass}>{first.corrected_category}</span>
-                          )}
+                          <span className={fromClass}>{first.original_category ?? '—'}</span>
+                          <span className={arrowClass}>→</span>
+                          <span className={toClass}>{first.corrected_category}</span>
                         </div>
                       )}
-                      {(first.corrected_merchant_name || first.original_merchant_name) && (
+                      {first.corrected_detail != null && (
+                        <div className="flex items-center gap-1">
+                          <span className={rowClass}>Sub-category:</span>
+                          <span className={fromClass}>{first.original_detail ?? '—'}</span>
+                          <span className={arrowClass}>→</span>
+                          <span className={toClass}>{first.corrected_detail}</span>
+                        </div>
+                      )}
+                      {first.corrected_merchant_name != null && (
                         <div className="flex items-center gap-1">
                           <span className={rowClass}>Merchant:</span>
-                          {first.original_merchant_name && (
-                            <span className={fromClass}>{first.original_merchant_name}</span>
-                          )}
-                          {first.original_merchant_name && first.corrected_merchant_name && (
-                            <span className={arrowClass}>→</span>
-                          )}
-                          {first.corrected_merchant_name && (
-                            <span className={toClass}>{first.corrected_merchant_name}</span>
-                          )}
+                          <span className={fromClass}>{first.original_merchant_name ?? '—'}</span>
+                          <span className={arrowClass}>→</span>
+                          <span className={toClass}>{first.corrected_merchant_name}</span>
                         </div>
                       )}
                       {first.corrected_amount != null && (
                         <div className="flex items-center gap-1">
                           <span className={rowClass}>Amount:</span>
-                          {first.original_amount != null && (
-                            <span className={fromClass}>{formatCurrency(first.original_amount)}</span>
-                          )}
-                          {first.original_amount != null && (
-                            <span className={arrowClass}>→</span>
-                          )}
+                          <span className={fromClass}>{first.original_amount != null ? formatCurrency(first.original_amount) : '—'}</span>
+                          <span className={arrowClass}>→</span>
                           <span className={toClass}>{formatCurrency(first.corrected_amount)}</span>
                         </div>
                       )}
-                      {first.corrected_date && (
+                      {first.corrected_date != null && (
                         <div className="flex items-center gap-1">
                           <span className={rowClass}>Date:</span>
-                          {first.original_date && (
-                            <span className={fromClass}>{formatShortDate(first.original_date)}</span>
-                          )}
-                          {first.original_date && (
-                            <span className={arrowClass}>→</span>
-                          )}
+                          <span className={fromClass}>{first.original_date ? formatShortDate(first.original_date) : '—'}</span>
+                          <span className={arrowClass}>→</span>
                           <span className={toClass}>{formatShortDate(first.corrected_date)}</span>
                         </div>
                       )}
                       {first.hidden_from_spending != null && (
                         <div className="flex items-center gap-1">
                           <span className={rowClass}>Hidden from spending:</span>
+                          <span className={fromClass}>{first.hidden_from_spending ? 'No' : 'Yes'}</span>
+                          <span className={arrowClass}>→</span>
                           <span className={toClass}>{first.hidden_from_spending ? 'Yes' : 'No'}</span>
                         </div>
                       )}
